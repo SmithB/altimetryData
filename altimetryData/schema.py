@@ -5,7 +5,7 @@ Every database shares the leading columns below; the sensor-specific columns fol
 every partition and every year of a database has an identical schema.
 
 Position is stored once, as a GeoParquet native ("point") geometry: a struct of projected x and y in EPSG:3413
-(GL) or EPSG:3031 (AA).  Latitude and longitude are not stored; they follow from x and y by the inverse
+(Arctic) or EPSG:3031 (AA).  Latitude and longitude are not stored; they follow from x and y by the inverse
 projection, and cell_id is computed from them.
 """
 
@@ -15,7 +15,7 @@ GEOMETRY = pa.struct([("x", pa.float64()), ("y", pa.float64())])
 
 COMMON = [
     ("cell_id", pa.uint64()),        # S2 level-18 cell, the sort key and pandas index
-    ("geometry", GEOMETRY),          # native point: x, y in EPSG:3413 (GL) or EPSG:3031 (AA), m
+    ("geometry", GEOMETRY),          # native point: x, y in EPSG:3413 (Arctic) or EPSG:3031 (AA), m
     ("delta_time", pa.float64()),    # GPS seconds since 2018-01-01T00:00:00 UTC, as in ICESat-2
     ("h", pa.float32()),             # WGS84 ellipsoid height in ITRF2020
     ("dh_frame", pa.float32()),      # h minus the height in the source frame and ellipsoid
@@ -93,6 +93,8 @@ SCHEMAS = {
     ("ICESat", "native"): COMMON + ICESAT_NATIVE,
     ("LVIS", "native"): COMMON + LVIS_NATIVE,
     ("LVIS", "reduced"): COMMON + LVIS_REDUCED,
+    ("LVIS_GH", "native"): COMMON + LVIS_NATIVE,
+    ("LVIS_GH", "reduced"): COMMON + LVIS_REDUCED,
 }
 
 # column chunks written first in every row group, so reads of the common columns are contiguous
@@ -114,17 +116,17 @@ ICESAT_CAMPAIGNS = ["1A", "2A", "2B", "2C", "3A", "3B", "3C", "3D", "3E", "3F", 
                     "2D", "2E", "2F"]
 
 RESOLUTIONS = {"ATM_wide": ["native", "reduced"], "ATM_narrow": ["native", "reduced"], "ICESat": ["native"],
-               "LVIS": ["native", "reduced"]}
+               "LVIS": ["native", "reduced"], "LVIS_GH": ["native", "reduced"]}
 
 # Column descriptions and units, written into every data file (Arrow field metadata, the altimetry_data and
 # gdal:schema file metadata) and into manifest.json.  "" means dimensionless or not applicable.
 DESCRIPTIONS = {
     "cell_id": ("S2 cell id at level 18 (cells about 36 m across) of the point, computed from the inverse "
                 "projection of the stored x and y; rows are sorted by it", ""),
-    "geometry": ("point location: x and y in the file's CRS, EPSG:3413 (GL) or EPSG:3031 (AA), projected from "
+    "geometry": ("point location: x and y in the file's CRS, EPSG:3413 (Arctic) or EPSG:3031 (AA), projected from "
                  "ITRF2020 latitude and longitude", "m"),
-    "geometry.x": ("x in EPSG:3413 (GL) or EPSG:3031 (AA)", "m"),
-    "geometry.y": ("y in EPSG:3413 (GL) or EPSG:3031 (AA)", "m"),
+    "geometry.x": ("x in EPSG:3413 (Arctic) or EPSG:3031 (AA)", "m"),
+    "geometry.y": ("y in EPSG:3413 (Arctic) or EPSG:3031 (AA)", "m"),
     "delta_time": ("time of the measurement: GPS seconds since 2018-01-01T00:00:00 UTC, as in ICESat-2", "s"),
     "h": ("height above the WGS84 ellipsoid in ITRF2020 at the epoch of the measurement", "m"),
     "dh_frame": ("h minus the height in the source reference frame and ellipsoid: the correction that was applied",
@@ -179,6 +181,7 @@ DESCRIPTIONS = {
 }
 SENSOR_DESCRIPTIONS = {
     "LVIS": {"azimuth": ("azimuth of the shot (ILVIS2 v2 only)", "degrees")},
+    "LVIS_GH": {"azimuth": ("azimuth of the shot (not in ILVGH2)", "degrees")},
 }
 
 

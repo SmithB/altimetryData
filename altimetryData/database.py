@@ -21,7 +21,7 @@ it, so the output is globally sorted while only one level-7 cell is held in memo
 
 Data files follow sliderule's atl06t format (README in sliderule/targets/atl06t) except that:
   * there is one file per sensor/region/year instead of one per level-7 cell;
-  * the geometry is a GeoParquet native point (struct of x, y) in EPSG:3413 (GL) or EPSG:3031 (AA), and
+  * the geometry is a GeoParquet native point (struct of x, y) in EPSG:3413 (Arctic) or EPSG:3031 (AA), and
     latitude and longitude are not stored (cell_id is computed from the inverse projection of the stored x, y);
   * footer statistics cover cell_id, delta_time, geometry.x, and geometry.y;
   * the time column is delta_time (GPS seconds since 2018-01-01, as in ICESat-2) rather than time_ns;

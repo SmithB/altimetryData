@@ -15,12 +15,12 @@ under [Differences from atl06t](#differences-from-atl06t).
 ```
 
 * `root` is `/Volumes/ice1/ben/oib_database/parquet`.
-* `sensor`: `ATM_wide` (BLATM1B, ILATM1B), `ATM_narrow` (ILNSA1B), `ICESat` (GLAH12 r34), or `LVIS` (BLVIS2,
-  ILVIS2, ILVGH2).
+* `sensor`: `ATM_wide` (BLATM1B, ILATM1B), `ATM_narrow` (ILNSA1B), `ICESat` (GLAH12 r34), `LVIS` (BLVIS2,
+  ILVIS2), or `LVIS_GH` (ILVGH2: the second LVIS instrument, flown beside LVIS in fall 2013).
 * `resolution`: `native` (every valid point) or `reduced` (block-median decimated points with local plane-fit
   statistics; ATM and LVIS only).
-* `region`: `GL`, every point at or north of 59°N, projected to EPSG:3413; or `AA`, every point at or south of
-  60°S, projected to EPSG:3031.  GL therefore also contains Arctic sea ice, Canadian Arctic, and Alaska flights.
+* `region`: `Arctic`, every point at or north of 59°N, projected to EPSG:3413 (Greenland, but also Arctic sea ice,
+  the Canadian Arctic, and Alaska flights); or `AA`, every point at or south of 60°S, projected to EPSG:3031.
 * `year`: the UTC calendar year of the point.
 
 Intermediate files (partitions, per-granule status, transient downloads) are kept under
@@ -35,7 +35,7 @@ Each data file is a GeoParquet 1.1 file:
 * Row groups target 8 MB.  They grow as needed so a file never has more than 5000 row groups, and no
   level-18 cell spans two row groups.
 * Geometry: a GeoParquet 1.1 native point (`encoding: "point"`), stored as `geometry: struct<x: double, y:
-  double>`.  The CRS is EPSG:3413 for GL and EPSG:3031 for AA.  x and y are those projections of the ITRF2020
+  double>`.  The CRS is EPSG:3413 for Arctic and EPSG:3031 for AA.  x and y are those projections of the ITRF2020
   latitude and longitude.  The files carry the EPSG projected CRS as requested; its WGS84 datum agrees with
   ITRF2020 at the centimeter level.  Position is stored only once: there are no latitude, longitude, or
   separate x/y columns.
@@ -92,7 +92,7 @@ x = pc.field("geometry", "x"); y = pc.field("geometry", "y")
 t = ds.dataset(f).to_table(filter=(x > xmin) & (x < xmax) & (y > ymin) & (y < ymax))   # prunes row groups
 
 from altimetryData import database as db
-lon, lat = db.unproject(*db.geometry_xy(t.column("geometry")), "GL")   # ITRF2020 latitude and longitude
+lon, lat = db.unproject(*db.geometry_xy(t.column("geometry")), "Arctic")   # ITRF2020 latitude and longitude
 ```
 
 * duckdb: `SELECT geometry.x, geometry.y, h FROM 'f.parquet' WHERE geometry.x BETWEEN ...`.  With the spatial
@@ -106,7 +106,7 @@ lon, lat = db.unproject(*db.geometry_xy(t.column("geometry")), "GL")   # ITRF202
 | Column | Type | Description |
 |:--|:--|:--|
 | cell_id | uint64 | S2 level-18 cell id (index; footer stats) |
-| geometry | struct<x, y: float64> | native point, EPSG:3413 (GL) or EPSG:3031 (AA), m (footer stats on x and y) |
+| geometry | struct<x, y: float64> | native point, EPSG:3413 (Arctic) or EPSG:3031 (AA), m (footer stats on x and y) |
 | delta_time | float64 | GPS seconds since 2018-01-01T00:00:00 UTC, as in ICESat-2 (footer stats) |
 | h | float32 | height above the WGS84 ellipsoid in ITRF2020, m |
 | dh_frame | float32 | h minus the height in the source frame and ellipsoid (the correction applied) |
@@ -144,7 +144,7 @@ ITRF2008 to WGS84 and ITRF2020.  The other columns are:
 No quality filtering is applied.  Cloud returns are present (for example, heights several hundred meters above
 the surface near Summit); filter with the flags.
 
-### LVIS (`LVIS`)
+### LVIS (`LVIS`, `LVIS_GH`)
 
 `h` is the center of the lowest mode: `ELEVATION_LOW` in ILVIS2 v1 and ILVGH2, `ZG` in ILVIS2 v2 and BLVIS2.  The
 v2 header states that these are the same quantity.
@@ -206,7 +206,14 @@ granules that have left CMR with `in_cmr = False`, so an id is never reused or r
   longitudes, size, HTTPS URL, and S3 URL;
 * `year` and `regions`;
 * for processed granules: `frame`, `frame_source`, `ellipsoid` (ICESat), `transceiver` (ATM, e.g. T4),
-  `campaign` (ICESat), `n_records`, `n_valid`, `n_native_{region}`, and `n_reduced_{region}`.
+  `campaign` (ICESat), `n_records`, `n_valid`, `n_native_{region}`, `n_reduced_{region}`, and `code_commit`;
+* `status`: `ok`; `failed` (after one retry; `error` holds the last line of the error, and the manifest lists
+  the granule); `excluded` (`exclusion_reason` says why); or `not processed`.
+
+Excluded granules are listed in `altimetryData/exclusions.py`.  So far they are three pre-IceBridge ATM duplicates:
+two byte-identical copies (`BLATM1B_950530atm1_151023C.qi`, `..._151406C.qi`) and a second processing of the
+shots in `BLATM1B_970521atm1_165945sr1200v.qi` (`..._sr1500v.qi`, whose elevations are 0.3 m lower and agree
+worse with the adjacent file of the flight).
 
 A point's raw record is `granules.parquet[granule_id]` → `https_url`, and record `source_index` in that granule.
 
@@ -227,7 +234,7 @@ granule cheap:
 ```python
 from altimetryData import read
 tables = read.read_granule(root, granule_id, resolution="native", columns=["geometry", "h", "source_index"])
-# {"GL": pyarrow.Table, ...}: one table per region, since the regions have different projections
+# {"Arctic": pyarrow.Table, ...}: one table per region, since the regions have different projections
 ```
 
 `read_granule` scans only the indexed row groups, filtering on `granule_id`, on at most `threads` (default 4)
@@ -247,7 +254,7 @@ so reading it means scanning its year file.
 ## Reading a box
 
 `altimetryData.read.read_box(root, sensors, resolution, region, bds=[[xmin, xmax], [ymin, ymax]], columns=None,
-threads=4)` returns every point inside a projected box (EPSG:3413 for GL, EPSG:3031 for AA; or give
+threads=4)` returns every point inside a projected box (EPSG:3413 for Arctic, EPSG:3031 for AA; or give
 `bbox=(xmin, ymin, xmax, ymax)` instead of `bds`), from every year of one or more databases, as one `pointCollection.data` object.
 Its fields are x, y, the requested columns (all by default), and `sensor`, the index into `sensors`; columns a
 sensor lacks are NaN.  The reader works in three steps:

@@ -19,6 +19,7 @@ import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
 from . import database as db
+from .collections import REGIONS
 
 
 def granule_row_groups(root, sensor, resolution, granule_id):
@@ -52,7 +53,7 @@ def read_granule(root, granule_id, resolution="native", columns=None, sensor=Non
     else:
         # the granule's start year, and the next one in case it runs past midnight on 31 December
         year = int(g[0]["year"])
-        groups = {(r, y): None for r in ("GL", "AA") for y in (year, year + 1)}
+        groups = {(r, y): None for r in REGIONS for y in (year, year + 1)}
     match = pc.field("granule_id") == granule_id
     want = None if columns is None else list(dict.fromkeys(["granule_id", *columns]))
     out = {}
@@ -241,7 +242,7 @@ def box_from_bds(bds):
 def read_box(root, sensors, resolution, region, *, bbox=None, bds=None, columns=None, years=None,
              strategy="stats", threads=4, stats_level=None, as_pointCollection=True, return_info=False):
     """
-    every point within a box (projected coordinates of the region, m: EPSG:3413 for GL, EPSG:3031 for AA) from
+    every point within a box (projected coordinates of the region, m: EPSG:3413 for Arctic, EPSG:3031 for AA) from
     every year of the databases of `sensors`, as one pointCollection.data object with fields x, y, the requested
     columns (all by default; NaN where a sensor lacks a column), and sensor (index into `sensors`); or as a dict
     of numpy arrays if as_pointCollection is False.

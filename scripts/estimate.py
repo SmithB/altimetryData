@@ -30,7 +30,8 @@ RATES = {
 # parquet bytes per row (native, reduced) in format version 2 (native point x/y, no lat/lon, delta-coded
 # source_index and shotnumber, mantissa trimming, zstd level 9), measured on single-granule files (ICESat: the
 # full 2003-2009 database)
-BYTES_PER_ROW = {"ATM_wide": (15.6, 30.4), "ATM_narrow": (15.6, 30.4), "ICESat": (32.5, 0.0), "LVIS": (15.0, 30.2)}
+BYTES_PER_ROW = {"ATM_wide": (15.6, 30.4), "ATM_narrow": (15.6, 30.4), "ICESat": (32.5, 0.0), "LVIS": (15.0, 30.2),
+                 "LVIS_GH": (15.0, 30.2)}
 BUILD_US_PER_ROW = 1.08 + 1.50   # data file + stats file (stats use 8 threads for the inverse projection)
 CONCURRENCY_SLOWDOWN = 1.5       # per-granule time with every core busy vs one isolated process
 

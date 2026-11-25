@@ -3,7 +3,7 @@
 Benchmark reading strategies.
 
     python scripts/benchmark_reads.py box --root ROOT --sensors ATM_wide ATM_narrow LVIS --resolution reduced \\
-        --region GL --center X Y [--size 40000] [--strategies dataset footer stats] [--cold] [--repeat 3]
+        --region Arctic --center X Y [--size 40000] [--strategies dataset footer stats] [--cold] [--repeat 3]
     python scripts/benchmark_reads.py granule --root ROOT --sensor ICESat --granules 99854 ... [--cold]
 
 box: time to read every point in a size x size box (projected coordinates), for every year of each database,
@@ -50,10 +50,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("mode", choices=["box", "granule"])
     parser.add_argument("--root", default=db.DEFAULT_ROOT)
-    parser.add_argument("--sensors", nargs="+", default=["ATM_wide", "ATM_narrow", "LVIS"])
+    parser.add_argument("--sensors", nargs="+", default=["ATM_wide", "ATM_narrow", "LVIS", "LVIS_GH"])
     parser.add_argument("--sensor", default=None)
     parser.add_argument("--resolution", default="reduced")
-    parser.add_argument("--region", default="GL")
+    parser.add_argument("--region", default="Arctic")
     parser.add_argument("--center", nargs=2, type=float)
     parser.add_argument("--size", type=float, default=40000.0)
     parser.add_argument("--columns", nargs="+", default=None)

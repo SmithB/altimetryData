@@ -42,6 +42,6 @@ def test_frames():
 def test_lvis_frames_from_user_guides():
     from altimetryData import granule as gr
     from altimetryData.collections import COLLECTIONS
-    lvis = [(c.short_name, c.version) for c in COLLECTIONS if c.sensor == "LVIS"]
+    lvis = [(c.short_name, c.version) for c in COLLECTIONS if c.sensor in ("LVIS", "LVIS_GH")]
     assert set(lvis) == set(gr.LVIS_FRAMES)          # every LVIS collection has a frame
     assert gr.LVIS_FRAMES[("ILVIS2", "1")][0] == "ITRF2000" and gr.LVIS_FRAMES[("ILVIS2", "2")][0] == "ITRF2008"

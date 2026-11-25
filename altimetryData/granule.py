@@ -22,6 +22,7 @@ REDUCE_PARAMS = {
     "ATM_narrow": {"decimate_to": 10.0, "stats_radius": 50.0, "min_sigma": 0.5},
     # LVIS footprints are ~20 m (2007-2015) and ~10 m (2013 Global Hawk, 2017); bins match the larger footprint
     "LVIS": {"decimate_to": 20.0, "stats_radius": 50.0, "min_sigma": 0.5},
+    "LVIS_GH": {"decimate_to": 20.0, "stats_radius": 50.0, "min_sigma": 0.5},
 }
 
 # frames fixed by product documentation (used when the granule itself does not say)
@@ -172,7 +173,8 @@ def process_lvis(path, granule, sensor, timings):
     return _split_and_reduce(native_all, sensor, info, timings, reduce_sensor=True), info
 
 
-PROCESSORS = {"ATM_wide": process_atm, "ATM_narrow": process_atm, "ICESat": process_glas, "LVIS": process_lvis}
+PROCESSORS = {"ATM_wide": process_atm, "ATM_narrow": process_atm, "ICESat": process_glas, "LVIS": process_lvis,
+              "LVIS_GH": process_lvis}
 
 
 def process_granule(path, granule):

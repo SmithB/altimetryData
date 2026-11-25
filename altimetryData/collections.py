@@ -12,7 +12,7 @@ CMR_PROVIDER = "NSIDC_CPRD"
 
 @dataclass(frozen=True)
 class Collection:
-    sensor: str        # ATM_wide, ATM_narrow, ICESat, or LVIS: one database family per sensor
+    sensor: str        # ATM_wide, ATM_narrow, ICESat, LVIS, or LVIS_GH: one database family per sensor
     short_name: str
     version: str       # CMR version_id, as CMR spells it
     fmt: str           # qi, h5, or txt: which reader to use
@@ -32,7 +32,8 @@ COLLECTIONS = [
     Collection("LVIS", "BLVIS2", "1", "txt", "LVIS"),     # pre-IceBridge, Greenland 2007
     Collection("LVIS", "ILVIS2", "1", "txt", "LVIS"),     # IceBridge, 2009-2015
     Collection("LVIS", "ILVIS2", "2", "txt", "LVIS"),     # IceBridge, Greenland 2017
-    Collection("LVIS", "ILVGH2", "1", "txt", "LVIS_GH"),  # LVIS on the Global Hawk, Greenland 2013
+    # LVIS-GH: a second LVIS instrument (designed for the Global Hawk) flown beside LVIS in fall 2013; separate
+    Collection("LVIS_GH", "ILVGH2", "1", "txt", "LVIS_GH"),
 ]
 
 SENSORS = sorted({c.sensor for c in COLLECTIONS})
@@ -44,8 +45,9 @@ def collections_for(sensor):
 
 # Regions.  Points are assigned to a region by latitude; the projected CRS is used for the x and y columns.
 # The limits keep every Greenland and Antarctic point while excluding transit and mid-latitude test flights.
+# "Arctic" holds everything north of 59 N: Greenland, but also Arctic sea ice, the Canadian Arctic, and Alaska.
 REGIONS = {
-    "GL": {"name": "Greenland", "epsg": 3413, "lat_min": 59.0, "lat_max": 90.0},
+    "Arctic": {"name": "Arctic", "epsg": 3413, "lat_min": 59.0, "lat_max": 90.0},
     "AA": {"name": "Antarctica", "epsg": 3031, "lat_min": -90.0, "lat_max": -60.0},
 }
 

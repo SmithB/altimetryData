@@ -22,7 +22,7 @@ import pandas as pd
 
 from altimetryData import database as db
 from altimetryData import granule as gr
-from altimetryData import provenance
+from altimetryData import exclusions, provenance
 from altimetryData import schema as sc
 from altimetryData.collections import REGIONS
 
@@ -41,30 +41,44 @@ def build_one(root, work_root, sensor, resolution, region, year, keep_partitions
 
 
 def granule_table(work_root, granules):
-    """inventory plus processing results from the status files"""
+    """
+    inventory plus processing results from the status files, with status = ok, failed (after its retries; error
+    holds the last line of the traceback), excluded (exclusion_reason says why), or not processed
+    """
     rows = []
     for f in glob.glob(os.path.join(work_root, "status", "*", "*.json")):
-        if f.endswith(".failed.json"):
-            continue
         with open(f) as fh:
             s = json.load(fh)
+        if f.endswith(".failed.json"):
+            s = {"granule_id": s["granule_id"], "status": "failed", "attempts": s.get("attempts"),
+                 "code_commit": s.get("code_commit"), "error": (s.get("error") or "").strip().splitlines()[-1:]}
+            s["error"] = s["error"][0] if s["error"] else None
         rows.append({k: v for k, v in s.items() if k not in ("timings", "partition_files", "granule", "sensor")})
-    if not rows:
-        return granules
-    status = pd.DataFrame(rows).drop(columns=["status"], errors="ignore")
-    return granules.merge(status, on="granule_id", how="left")
+    table = granules.copy()
+    if rows:
+        status = pd.DataFrame(rows).drop_duplicates("granule_id", keep="first")
+        table = table.merge(status, on="granule_id", how="left")
+    if "status" not in table:
+        table["status"] = None
+    table["status"] = table["status"].fillna("not processed")
+    table["exclusion_reason"] = table["granule"].map(exclusions.EXCLUDED)
+    table.loc[table["exclusion_reason"].notna(), "status"] = "excluded"
+    return table
 
 
 def incomplete(work_root, granules):
-    """{(sensor, year): number of in-region granules without a successful status file}"""
-    g = granules[granules["regions"].str.len() > 0]
+    """
+    {(sensor, year): number of in-region granules not yet processed}.  Granules that failed after their retries
+    (a .failed.json status) and excluded granules do not count: their years are built without them
+    """
+    g = granules[(granules["regions"].str.len() > 0) & ~granules["granule"].isin(set(exclusions.EXCLUDED))]
     done = {(os.path.basename(os.path.dirname(f)), int(os.path.basename(f)[:8]))
-            for f in glob.glob(os.path.join(work_root, "status", "*", "*.json")) if not f.endswith(".failed.json")}
+            for f in glob.glob(os.path.join(work_root, "status", "*", "*.json"))}
     todo = [(s, int(y)) for s, y, i in zip(g["sensor"], g["year"], g["granule_id"]) if (s, int(i)) not in done]
     return pd.Series(todo, dtype=object).value_counts().to_dict() if todo else {}
 
 
-def write_manifest(root, sensor, resolution):
+def write_manifest(root, sensor, resolution, table):
     import pyarrow.parquet as pq
     files = sorted(glob.glob(os.path.join(root, sensor, resolution, "data", "*.parquet")))
     processing_commits = set()
@@ -93,6 +107,12 @@ def write_manifest(root, sensor, resolution):
         "granule_index": os.path.relpath(index, os.path.join(root, sensor, resolution)) if index else None,
         "columns": sc.column_info(sensor, resolution),
         "files": [os.path.relpath(f, os.path.join(root, sensor, resolution)) for f in files],
+        # granules of this sensor left out of the files
+        "failed_granules": [{"granule_id": int(r.granule_id), "granule": r.granule, "year": int(r.year),
+                             "error": r.error if isinstance(getattr(r, "error", None), str) else None}
+                            for r in table[(table["sensor"] == sensor) & (table["status"] == "failed")].itertuples()],
+        "excluded_granules": [{"granule_id": int(r.granule_id), "granule": r.granule, "reason": r.exclusion_reason}
+                              for r in table[(table["sensor"] == sensor) & (table["status"] == "excluded")].itertuples()],
     }
     with open(os.path.join(root, sensor, resolution, "manifest.json"), "w") as fh:
         json.dump(manifest, fh, indent=2)
@@ -153,7 +173,7 @@ def main():
     for sensor, resolutions in sc.RESOLUTIONS.items():
         for resolution in resolutions:
             if os.path.isdir(os.path.join(args.root, sensor, resolution, "data")):
-                write_manifest(args.root, sensor, resolution)
+                write_manifest(args.root, sensor, resolution, table)
 
 
 if __name__ == "__main__":

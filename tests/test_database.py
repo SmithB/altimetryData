@@ -19,7 +19,7 @@ def _granule(seed, granule_id, n=40000):
     native = {"longitude": lon, "latitude": lat, "h": h, "dh_frame": np.full(n, -0.002), "delta_time": dt,
               "source_index": np.arange(n, dtype=np.uint32), "granule_id": np.full(n, granule_id, np.uint32),
               "rcv_sigstr": rng.integers(100, 1000, n)}
-    native["x"], native["y"] = db.project(lon, lat, "GL")
+    native["x"], native["y"] = db.project(lon, lat, "Arctic")
     return native
 
 
@@ -27,14 +27,14 @@ def test_build_and_stats(tmp_path):
     root = str(tmp_path)
     for gid in range(3):
         native = _granule(gid, gid)
-        db.write_partitions(db.make_table(native, "ATM_wide", "native", "GL"), root, "ATM_wide", "native", "GL", gid)
+        db.write_partitions(db.make_table(native, "ATM_wide", "native", "Arctic"), root, "ATM_wide", "native", "Arctic", gid)
         keep, stats = reduce.reduce_points(native["x"], native["y"], native["h"], 10, 50, 0.5)
         red = {k: v[keep] for k, v in native.items()}
         red.update(bias=stats["bias"], noise=stats["noise"], n_fit=np.nan_to_num(stats["N"]),
                    slope_x=stats["slope_x"], slope_y=stats["slope_y"])
-        db.write_partitions(db.make_table(red, "ATM_wide", "reduced", "GL"), root, "ATM_wide", "reduced", "GL", gid)
+        db.write_partitions(db.make_table(red, "ATM_wide", "reduced", "Arctic"), root, "ATM_wide", "reduced", "Arctic", gid)
 
-    out = db.build_database_file(root, "ATM_wide", "native", "GL", 2011, target_bytes=200_000)
+    out = db.build_database_file(root, "ATM_wide", "native", "Arctic", 2011, target_bytes=200_000)
     pf = pq.ParquetFile(out)
     assert pf.metadata.num_rows == 120000
     assert pf.metadata.num_row_groups > 1
@@ -73,21 +73,21 @@ def test_build_and_stats(tmp_path):
     g = gpd.read_parquet(out)
     assert g.index.name == "cell_id" and g.crs.to_epsg() == 3413
     # cell_id is reproducible exactly from the stored geometry
-    lon, lat = db.unproject(g.geometry.x.to_numpy(), g.geometry.y.to_numpy(), "GL")
+    lon, lat = db.unproject(g.geometry.x.to_numpy(), g.geometry.y.to_numpy(), "Arctic")
     assert np.array_equal(s2.cell_ids(lon, lat, 18), g.index.to_numpy())
     # and the geometry matches the input positions to within the rounding quantum
     native = _granule(0, 0)
-    x0, y0 = db.project(native["longitude"], native["latitude"], "GL")
+    x0, y0 = db.project(native["longitude"], native["latitude"], "Arctic")
     sel = g[g.granule_id == 0].sort_values("source_index")
     assert np.abs(sel.geometry.x.to_numpy() - x0).max() <= db.QUANTUM["x"] / 2
 
-    st = db.build_stats(out, db.stats_path(root, "ATM_wide", "native", "GL", 2011))
+    st = db.build_stats(out, db.stats_path(root, "ATM_wide", "native", "Arctic", 2011))
     S = pq.read_table(st).to_pandas()
     assert set(S.level) == set(db.STAT_LEVELS)
     assert (S.groupby("level").row_count.sum() == 120000).all()
     T = pq.read_table(out, columns=["cell_id", "geometry", "h"])
     x, y = db.geometry_xy(T.column("geometry"))
-    lon, lat = db.unproject(x, y, "GL")
+    lon, lat = db.unproject(x, y, "Arctic")
     T = pd.DataFrame({"x": x, "lat": lat, "h": T.column("h").to_numpy()})
     ref = T.groupby(s2.parent(pq.read_table(out, columns=["cell_id"]).column("cell_id").to_numpy(), 12)).agg(
         ["min", "max", "mean"])
@@ -95,17 +95,17 @@ def test_build_and_stats(tmp_path):
     assert np.allclose(s12["x_mean"], ref[("x", "mean")]) and np.allclose(s12["h_max"], ref[("h", "max")])
     assert np.allclose(s12["lat_min"], ref[("lat", "min")]) and np.allclose(s12["lat_mean"], ref[("lat", "mean")])
 
-    red = db.build_database_file(root, "ATM_wide", "reduced", "GL", 2011)
+    red = db.build_database_file(root, "ATM_wide", "reduced", "Arctic", 2011)
     assert 0 < pq.read_metadata(red).num_rows < 120000
 
 
 def test_granule_index_and_read(tmp_path):
     root = str(tmp_path)
     for gid in range(3):
-        db.write_partitions(db.make_table(_granule(gid, gid), "ATM_wide", "native", "GL"), root, "ATM_wide",
-                            "native", "GL", gid)
-    out = db.build_database_file(root, "ATM_wide", "native", "GL", 2011, target_bytes=100_000)
-    idx = pq.read_table(db.index_path(root, "ATM_wide", "native", "GL", 2011)).to_pandas()
+        db.write_partitions(db.make_table(_granule(gid, gid), "ATM_wide", "native", "Arctic"), root, "ATM_wide",
+                            "native", "Arctic", gid)
+    out = db.build_database_file(root, "ATM_wide", "native", "Arctic", 2011, target_bytes=100_000)
+    idx = pq.read_table(db.index_path(root, "ATM_wide", "native", "Arctic", 2011)).to_pandas()
     t = pq.read_table(out, columns=["granule_id", "source_index"])
     pf = pq.ParquetFile(out)
     # the index lists exactly the row groups (and row counts) holding each granule
@@ -119,8 +119,8 @@ def test_granule_index_and_read(tmp_path):
                   "year": np.int16(2011)}).to_parquet(f"{root}/granules.parquet")
     for use_index in (True, False):
         got = read.read_granule(root, 1, columns=["source_index", "h"], use_index=use_index)
-        assert list(got) == ["GL"]
-        assert np.array_equal(np.sort(got["GL"].column("source_index").to_numpy()), np.arange(40000))
+        assert list(got) == ["Arctic"]
+        assert np.array_equal(np.sort(got["Arctic"].column("source_index").to_numpy()), np.arange(40000))
 
 
 def test_read_box_matches_brute_force(tmp_path):
@@ -129,21 +129,21 @@ def test_read_box_matches_brute_force(tmp_path):
         native = _granule(gid, gid)
         if sensor == "LVIS":
             native.pop("rcv_sigstr")      # LVIS has no rcv_sigstr; its lfid/shotnumber stay null
-        db.write_partitions(db.make_table(native, sensor, "reduced", "GL"), root, sensor, "reduced", "GL", gid)
+        db.write_partitions(db.make_table(native, sensor, "reduced", "Arctic"), root, sensor, "reduced", "Arctic", gid)
     for sensor in ("ATM_wide", "LVIS"):
-        f = db.build_database_file(root, sensor, "reduced", "GL", 2011, target_bytes=60_000)
-        db.build_stats(f, db.stats_path(root, sensor, "reduced", "GL", 2011))
-    x0, y0 = db.project(np.array([-49.4]), np.array([69.15]), "GL")
+        f = db.build_database_file(root, sensor, "reduced", "Arctic", 2011, target_bytes=60_000)
+        db.build_stats(f, db.stats_path(root, sensor, "reduced", "Arctic", 2011))
+    x0, y0 = db.project(np.array([-49.4]), np.array([69.15]), "Arctic")
     bbox = (x0[0] - 3000, y0[0] - 3000, x0[0] + 3000, y0[0] + 3000)
     ref = {}
     for sensor in ("ATM_wide", "LVIS"):
-        t = pq.read_table(db.data_path(root, sensor, "reduced", "GL", 2011))
+        t = pq.read_table(db.data_path(root, sensor, "reduced", "Arctic", 2011))
         x, y = db.geometry_xy(t.column("geometry"))
         m = (x >= bbox[0]) & (x <= bbox[2]) & (y >= bbox[1]) & (y <= bbox[3])
         ref[sensor] = {"x": x[m], "h": t.column("h").to_numpy()[m], "source_index": t.column("source_index").to_numpy()[m]}
     assert 0 < ref["ATM_wide"]["x"].size < 80000 and ref["LVIS"]["x"].size > 0
     for strategy in ("stats", "footer", "dataset"):
-        dd, info = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox=bbox, strategy=strategy, threads=3,
+        dd, info = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "Arctic", bbox=bbox, strategy=strategy, threads=3,
                                  as_pointCollection=False, return_info=True)
         assert info["rows_read"] < 80000 + 40000        # pruning skipped some row groups
         for k, sensor in enumerate(("ATM_wide", "LVIS")):
@@ -158,12 +158,12 @@ def test_read_box_matches_brute_force(tmp_path):
         assert dd["rcv_sigstr"].dtype == np.float64 and np.isnan(dd["rcv_sigstr"][dd["sensor"] == 1]).all()
         assert np.isnan(dd["lfid"]).all() and dd["h"].dtype == np.float32 and dd["cell_id"].dtype == np.uint64
     pc_ = pytest.importorskip("pointCollection")
-    D = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox=bbox)
+    D = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "Arctic", bbox=bbox)
     assert D.size == sum(v["x"].size for v in ref.values()) and "bias" in D.fields
     # bds=[[xmin, xmax], [ymin, ymax]] gives the same points
-    D2 = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bds=[[bbox[0], bbox[2]], [bbox[1], bbox[3]]])
+    D2 = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "Arctic", bds=[[bbox[0], bbox[2]], [bbox[1], bbox[3]]])
     assert np.array_equal(np.sort(D2.x), np.sort(D.x))
     with pytest.raises(TypeError):
-        read.read_box(root, ["ATM_wide"], "reduced", "GL", bbox=bbox, bds=[[0, 1], [0, 1]])
+        read.read_box(root, ["ATM_wide"], "reduced", "Arctic", bbox=bbox, bds=[[0, 1], [0, 1]])
     with pytest.raises(TypeError):
-        read.read_box(root, ["ATM_wide"], "reduced", "GL")
+        read.read_box(root, ["ATM_wide"], "reduced", "Arctic")

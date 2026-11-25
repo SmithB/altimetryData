@@ -4,7 +4,8 @@ Download and process granules into database partitions.
 
     python scripts/process_granules.py --granules granules.parquet \\
         [--root /Volumes/ice1/ben/oib_database/parquet] [--work_root ROOT_work] \\
-        [--sensors ATM_wide] [--years 2011 2012] [--regions GL] [--workers 32] [--transport https|s3] \\
+        [--sensors ATM_wide] [--years 2011 2012] [--regions Arctic] [--area REGION LON LAT SIZE_KM] \\
+        [--max_downloads 6] [--max_MBps 40] [--retries 1] [--retry_failed] [--transport https|s3] \\
         [--keep_raw] [--limit 100]
 
 Each granule is downloaded into its own directory under {work_root}/raw, processed, written to partitions under
@@ -12,6 +13,16 @@ Each granule is downloaded into its own directory under {work_root}/raw, process
 ({work_root}/status/{sensor}/{granule_id:08d}.json) records the frame used, point counts, timings, and the
 partition files; granules with a status file are skipped, so the script can be rerun to resume.  Use
 --transport s3 only on compute in AWS us-west-2.
+
+Downloads are limited so the run does not saturate the network: at most --max_downloads at a time, and at most
+--max_MBps in total (a cap shared by every worker; 0 for none).  While the script runs, the cap can be changed by
+writing a number (MB/s) to {work_root}/max_MBps; it is re-read every 10 s, and deleting the file restores
+--max_MBps.
+
+A granule that fails is retried --retries times at the end of the run, then recorded in
+{sensor}/{granule_id:08d}.failed.json and skipped: later runs leave it alone unless --retry_failed is given, and
+build_database.py builds its year without it and lists it in the manifest.  Granules in
+altimetryData.exclusions are never processed.
 """
 
 import argparse
@@ -28,22 +39,36 @@ import pandas as pd
 _STATE = {}
 
 
-def _init_worker(transport, threads):
+def _init_worker(transport, threads, download_slots, next_time, lock, max_MBps, rate_file):
     import numba
     numba.set_num_threads(threads)
     from altimetryData import download
     _STATE["fetch"] = download.fetcher(transport)
     _STATE["transport"] = transport
+    _STATE["slots"] = download_slots
+    _STATE["limiter"] = download.RateLimiter(next_time, lock, max_MBps, rate_file)
 
 
 def _status_file(root, granule):
     return os.path.join(root, "status", granule["sensor"], f"{int(granule['granule_id']):08d}.json")
 
 
+def _failed_file(root, granule):
+    return _status_file(root, granule).replace(".json", ".failed.json")
+
+
+def _attempts(root, granule):
+    try:
+        with open(_failed_file(root, granule)) as fh:
+            return int(json.load(fh).get("attempts", 1))
+    except (OSError, ValueError):
+        return 0
+
+
 def run_one(granule, work_root, work_dir, keep_raw, local_dir, code_commit):
     from altimetryData import download, granule as gr
     status = {"granule_id": int(granule["granule_id"]), "granule": granule["granule"], "sensor": granule["sensor"],
-              "code_commit": code_commit}
+              "code_commit": code_commit, "attempts": _attempts(work_root, granule) + 1}
     t0 = time.perf_counter()
     path = None
     try:
@@ -51,8 +76,12 @@ def run_one(granule, work_root, work_dir, keep_raw, local_dir, code_commit):
             path = os.path.join(local_dir, granule["granule"])
             status["download_s"] = 0.0
         else:
-            path = download.fetch_granule(_STATE["fetch"], granule, _STATE["transport"], work_dir)
-            status["download_s"] = time.perf_counter() - t0
+            with _STATE["slots"]:            # at most --max_downloads at once
+                t_wait = time.perf_counter()
+                path = download.fetch_granule(_STATE["fetch"], granule, _STATE["transport"], work_dir,
+                                              limiter=_STATE["limiter"])
+            status["download_wait_s"] = t_wait - t0
+            status["download_s"] = time.perf_counter() - t_wait
         status["bytes"] = os.path.getsize(path)
         info = gr.write_granule(path, granule, work_root)
         status.update(info)
@@ -69,8 +98,10 @@ def run_one(granule, work_root, work_dir, keep_raw, local_dir, code_commit):
     if status["status"] == "ok":
         with open(out, "w") as fh:
             json.dump(status, fh, default=str)
+        if os.path.isfile(_failed_file(work_root, granule)):
+            os.remove(_failed_file(work_root, granule))
     else:
-        with open(out.replace(".json", ".failed.json"), "w") as fh:
+        with open(_failed_file(work_root, granule), "w") as fh:
             json.dump(status, fh, default=str)
     return status
 
@@ -91,7 +122,8 @@ def in_areas(granules, areas):
 
 
 def select(granules, sensors=None, years=None, regions=None, areas=None):
-    g = granules
+    from altimetryData import exclusions
+    g = granules[~granules["granule"].isin(set(exclusions.EXCLUDED))]
     if areas:
         g = in_areas(g, areas)
     if sensors:
@@ -116,7 +148,14 @@ def main():
     parser.add_argument("--area", nargs=4, action="append", metavar=("REGION", "LON", "LAT", "SIZE_KM"),
                         help="only granules whose CMR bounding box meets a SIZE_KM box centered on LON, LAT "
                              "(repeatable)")
-    parser.add_argument("--workers", type=int, default=os.cpu_count())
+    parser.add_argument("--workers", type=int, default=None,
+                        help="worker processes (default: 2 x max_downloads + 4, so processing overlaps downloads)")
+    parser.add_argument("--max_downloads", type=int, default=6, help="simultaneous downloads (default 6)")
+    parser.add_argument("--max_MBps", type=float, default=40.0,
+                        help="total download rate cap, MB/s (default 40; 0 for none); {work_root}/max_MBps overrides")
+    parser.add_argument("--retries", type=int, default=1, help="retries of failed granules at the end of the run")
+    parser.add_argument("--retry_failed", action="store_true",
+                        help="also retry granules that failed in earlier runs")
     parser.add_argument("--threads_per_worker", type=int, default=1)
     parser.add_argument("--transport", choices=["https", "s3"], default="https")
     parser.add_argument("--local_dir", default=None, help="read already-downloaded granules from this directory")
@@ -134,30 +173,51 @@ def main():
     work_dir = os.path.join(work_root, "raw")
     os.makedirs(work_dir, exist_ok=True)
     granules = select(pd.read_parquet(args.granules), args.sensors, args.years, args.regions, args.area)
-    todo = [row for _, row in granules.iterrows() if not os.path.isfile(_status_file(work_root, row))]
+    todo = [row for _, row in granules.iterrows() if not os.path.isfile(_status_file(work_root, row))
+            and (args.retry_failed or not os.path.isfile(_failed_file(work_root, row)))]
     if args.limit:
         todo = todo[:args.limit]
     total_bytes = sum(r["size_bytes"] for r in todo)
     print(f"{len(todo)} granules to process ({total_bytes / 1e9:.1f} GB) of {len(granules)} selected", flush=True)
+    workers = args.workers or min(os.cpu_count(), 2 * args.max_downloads + 4)
+    rate_file = os.path.join(work_root, "max_MBps")
+    print(f"{workers} workers, at most {args.max_downloads} downloads at once, cap {args.max_MBps:g} MB/s "
+          f"(override: echo N > {rate_file})", flush=True)
 
+    import multiprocessing
+    ctx = multiprocessing.get_context()
+    slots, next_time, lock = ctx.BoundedSemaphore(args.max_downloads), ctx.Value("d", 0.0), ctx.Lock()
+    commit = code["commit"] + ("-dirty" if code["dirty"] else "")
     t0 = time.perf_counter()
     done_bytes, n_ok, n_failed = 0, 0, 0
-    with ProcessPoolExecutor(args.workers, initializer=_init_worker,
-                             initargs=(args.transport, args.threads_per_worker)) as pool:
-        futures = [pool.submit(run_one, row.to_dict(), work_root, work_dir, args.keep_raw, args.local_dir,
-                               code["commit"] + ("-dirty" if code["dirty"] else "")) for row in todo]
-        for k, future in enumerate(as_completed(futures), start=1):
-            s = future.result()
-            elapsed = time.perf_counter() - t0
-            if s["status"] == "ok":
-                n_ok += 1
-                done_bytes += s.get("bytes", 0)
-            else:
-                n_failed += 1
-                print(f"FAILED {s['granule']}: {s['error'].splitlines()[-1]}", flush=True)
-            if k % 10 == 0 or k == len(futures):
-                print(f"[{k}/{len(futures)}] {n_ok} ok {n_failed} failed; {done_bytes / 1e6 / elapsed:.1f} MB/s, "
-                      f"{k / elapsed * 3600:.0f} granules/h, elapsed {elapsed / 60:.1f} min", flush=True)
+    with ProcessPoolExecutor(workers, mp_context=ctx, initializer=_init_worker,
+                             initargs=(args.transport, args.threads_per_worker, slots, next_time, lock,
+                                       args.max_MBps, rate_file)) as pool:
+        for attempt in range(1 + max(0, args.retries)):
+            if attempt:
+                todo = [row for row in todo if not os.path.isfile(_status_file(work_root, row))]
+                if not todo:
+                    break
+                print(f"retry {attempt}: {len(todo)} failed granules", flush=True)
+            futures = [pool.submit(run_one, row.to_dict(), work_root, work_dir, args.keep_raw, args.local_dir,
+                                   commit) for row in todo]
+            n_failed = 0
+            for k, future in enumerate(as_completed(futures), start=1):
+                s = future.result()
+                elapsed = time.perf_counter() - t0
+                if s["status"] == "ok":
+                    n_ok += 1
+                    done_bytes += s.get("bytes", 0)
+                else:
+                    n_failed += 1
+                    print(f"FAILED {s['granule']} (attempt {s['attempts']}): {s['error'].splitlines()[-1]}",
+                          flush=True)
+                if k % 10 == 0 or k == len(futures):
+                    print(f"[{k}/{len(futures)}] {n_ok} ok {n_failed} failed; {done_bytes / 1e6 / elapsed:.1f} MB/s, "
+                          f"{k / elapsed * 3600:.0f} granules/h, elapsed {elapsed / 60:.1f} min", flush=True)
+    if n_failed:
+        print(f"{n_failed} granules failed after {1 + max(0, args.retries)} attempts; see "
+              f"{work_root}/status/*/*.failed.json (rerun with --retry_failed to try them again)", flush=True)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ This builds GeoParquet databases of airborne and satellite laser altimetry over 
 ATM (wide- and narrow-swath), ICESat/GLAS, and LVIS.  Heights are on the WGS84 ellipsoid in ITRF2020, so they
 compare directly with ICESat-2 release 007 and later.
 
-There is one file per sensor, resolution (native / reduced), region (GL / AA), and year, in the layout of
+There is one file per sensor, resolution (native / reduced), region (Arctic / AA), and year, in the layout of
 sliderule's atl06t product.  The geometry is a GeoParquet native point in EPSG:3413 (Greenland) or EPSG:3031
 (Antarctica), and positions are stored only once (no latitude/longitude columns).  The full specification is in [docs/database_format.md](docs/database_format.md).
 The database lives at `/Volumes/ice1/ben/oib_database/parquet`.
@@ -19,7 +19,7 @@ pip install -e .            # numpy, numba, pandas, pyarrow, pyproj, h5py, reque
 python scripts/build_inventory.py --out /Volumes/ice1/ben/oib_database/parquet_work/inventory/granules.parquet
 
 # 2. download + process granules into partitions (resumable; Earthdata login from ~/.netrc or EARTHDATA_TOKEN)
-python scripts/process_granules.py --granules .../inventory/granules.parquet --workers 96 [--sensors ATM_wide --years 2011]
+python scripts/process_granules.py --granules .../inventory/granules.parquet [--max_downloads 6 --max_MBps 40] [--sensors ATM_wide --years 2011]
 
 # 3. build the data and stats files, manifests, and the lookup table
 python scripts/build_database.py --granules .../inventory/granules.parquet --workers 8
@@ -33,6 +33,9 @@ python scripts/estimate.py --granules .../inventory/granules.parquet --download_
   (ATM, LVIS).  It writes partitions, deletes the raw file, and records a status file.  Granules with a status
   file are skipped on rerun.  `--transport s3` reads the NSIDC bucket directly; it works only from AWS
   us-west-2 (e.g. NASA MAAP).
+* A granule that fails is retried once at the end of the run, then logged (`status = failed` in
+  `granules.parquet`, `failed_granules` in the manifest) and its year is built without it.  Granules listed in
+  `altimetryData/exclusions.py` (duplicates) are never processed.
 * Both scripts refuse to run from uncommitted or unpushed code (override with `--allow_dirty`).  Every file
   records the repository, commit, and commit URL that made it, and the commits that processed its granules
   (see Provenance in the format spec).
@@ -65,18 +68,22 @@ python scripts/estimate.py --granules .../inventory/granules.parquet --download_
 |:--|--:|--:|--:|--:|--:|--:|--:|
 | ATM_wide | 66,376 | 1.64 TB | 55 G | 0.86 TB | 0.21 TB | 5.4 h | 60 core-h |
 | ATM_narrow | 33,025 | 0.37 TB | 19 G | 0.29 TB | 0.07 TB | 1.2 h | 19 core-h |
-| LVIS | 4,047 | 0.43 TB | 2 G | 0.03 TB | 0.02 TB | 1.4 h | 3.5 core-h |
+| LVIS | 3,709 | 0.40 TB | 1.8 G | 0.03 TB | 0.02 TB | 1.3 h | 3.2 core-h |
+| LVIS_GH | 338 | 0.03 TB | 0.2 G | 0.004 TB | 0.001 TB | 0.1 h | 0.3 core-h |
 | ICESat | 637 | 0.02 TB | 0.2 G | 0.01 TB | — | 3 min (measured) | 0.4 core-h |
 | **total** | **104,085** | **2.45 TB** | **76 G** | **1.18 TB** | **0.31 TB** | **8 h** | **82 core-h** |
 
-* **Download is the bottleneck locally.** The link to NSIDC saturates at 85–95 MB/s regardless of the stream
-  count (32 streams: 2.7 MB/s each; 64 streams: 1.5 MB/s each).  The ICESat run sustained 85–97 MB/s.
+* **Download is the bottleneck locally.** Unlimited, the link to NSIDC saturates at 85–110 MB/s, which slows
+  everything else on the network.  `process_granules.py` therefore caps downloads by default at 6 at a time and
+  40 MB/s in total, about 17 h for the full 2.45 TB.  Change the cap while a run is going with
+  `echo 60 > /Volumes/ice1/ben/oib_database/parquet_work/max_MBps` (re-read every 10 s; delete the file to
+  return to the default).  The download times in the table are at an unlimited 85 MB/s.
 * **Processing** runs at 2.4–4.6 µs per point on one core, so 82 core-hours is under 1 h on 96 cores, fully
   hidden behind the download.
 * **Building** costs about 2.6 µs/row (1.1 for the data file, 1.5 for the stats file), or 62 core-hours.  Files
-  build in parallel, so the wall time is set by the largest file, ATM_wide GL 2017 (7 G points, about 110 GB):
+  build in parallel, so the wall time is set by the largest file, ATM_wide Arctic 2017 (7 G points, about 110 GB):
   roughly 5 h.
-* **Total locally: about 12–13 h.**  Peak disk is about 1.5 TB of output plus partitions for the years in
+* **Total locally: about 21–22 h at the default 40 MB/s cap** (12–13 h unlimited).  Peak disk is about 1.5 TB of output plus partitions for the years in
   flight; /Volumes/ice1 has 15 TB free.
 * **Cloud (MAAP / us-west-2)** would cut the download to about 1 h at in-region S3 rates (assumed, not measured
   from here).  The 1.5 TB result would then have to come back to /Volumes/ice1, which takes about 5 h at the
@@ -135,9 +142,11 @@ Measured on single granules (B/row, with `cell_id` stored at the sort level):
 * **GLAS time:** `d_UTCTime_40` is treated as UTC without leap seconds, a ±1 s ambiguity after the 2005 and 2008
   leap seconds.
 * **LVIS v2:** the three unnamed trailing columns are read as CHANNEL_ZT, CHANNEL_ZG, CHANNEL_RH.
-* **BLATM1B:** all pre-IceBridge ATM is classed as `ATM_wide`.
-* **Regions:** GL is everything ≥59°N, so it includes Arctic sea ice, the Canadian Arctic, and Alaska; AA is
-  everything ≤60°S.
+* **BLATM1B:** all pre-IceBridge ATM is classed as `ATM_wide` (no flight date has two transceivers).
+* **LVIS and LVIS_GH** are separate databases: two instruments on the same aircraft in fall 2013 (different
+  `lfid` prefixes, no shared shots, tracks 180–280 m apart).  Both reduce with 20 m bins.
+* **Regions:** `Arctic` is everything ≥59°N, so it includes Greenland, Arctic sea ice, the Canadian Arctic, and
+  Alaska; `AA` is everything ≤60°S.
 * **ICESat corrections:** the saturation correction is applied.  G−C (`gmc`) and the ocean tide are stored but
   not applied.
 
