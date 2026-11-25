@@ -143,7 +143,7 @@ def test_read_box_matches_brute_force(tmp_path):
         ref[sensor] = {"x": x[m], "h": t.column("h").to_numpy()[m], "source_index": t.column("source_index").to_numpy()[m]}
     assert 0 < ref["ATM_wide"]["x"].size < 80000 and ref["LVIS"]["x"].size > 0
     for strategy in ("stats", "footer", "dataset"):
-        dd, info = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox, strategy=strategy, threads=3,
+        dd, info = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox=bbox, strategy=strategy, threads=3,
                                  as_pointCollection=False, return_info=True)
         assert info["rows_read"] < 80000 + 40000        # pruning skipped some row groups
         for k, sensor in enumerate(("ATM_wide", "LVIS")):
@@ -158,5 +158,12 @@ def test_read_box_matches_brute_force(tmp_path):
         assert dd["rcv_sigstr"].dtype == np.float64 and np.isnan(dd["rcv_sigstr"][dd["sensor"] == 1]).all()
         assert np.isnan(dd["lfid"]).all() and dd["h"].dtype == np.float32 and dd["cell_id"].dtype == np.uint64
     pc_ = pytest.importorskip("pointCollection")
-    D = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox)
+    D = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox=bbox)
     assert D.size == sum(v["x"].size for v in ref.values()) and "bias" in D.fields
+    # bds=[[xmin, xmax], [ymin, ymax]] gives the same points
+    D2 = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bds=[[bbox[0], bbox[2]], [bbox[1], bbox[3]]])
+    assert np.array_equal(np.sort(D2.x), np.sort(D.x))
+    with pytest.raises(TypeError):
+        read.read_box(root, ["ATM_wide"], "reduced", "GL", bbox=bbox, bds=[[0, 1], [0, 1]])
+    with pytest.raises(TypeError):
+        read.read_box(root, ["ATM_wide"], "reduced", "GL")

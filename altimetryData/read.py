@@ -232,13 +232,22 @@ def _assemble(parts, bbox, sensors, threads):
     return out
 
 
-def read_box(root, sensors, resolution, region, bbox, columns=None, years=None, strategy="stats", threads=4,
-             stats_level=None, as_pointCollection=True, return_info=False):
+def box_from_bds(bds):
+    """(xmin, ymin, xmax, ymax) from bds = [[xmin, xmax], [ymin, ymax]]"""
+    (xmin, xmax), (ymin, ymax) = bds
+    return (float(xmin), float(ymin), float(xmax), float(ymax))
+
+
+def read_box(root, sensors, resolution, region, *, bbox=None, bds=None, columns=None, years=None,
+             strategy="stats", threads=4, stats_level=None, as_pointCollection=True, return_info=False):
     """
-    every point within bbox = (xmin, ymin, xmax, ymax) (projected coordinates of the region) from every year of
-    the databases of `sensors`, as one pointCollection.data object with fields x, y, the requested columns (all
-    by default; NaN where a sensor lacks a column), and sensor (index into `sensors`); or as a dict of numpy
-    arrays if as_pointCollection is False.
+    every point within a box (projected coordinates of the region, m: EPSG:3413 for GL, EPSG:3031 for AA) from
+    every year of the databases of `sensors`, as one pointCollection.data object with fields x, y, the requested
+    columns (all by default; NaN where a sensor lacks a column), and sensor (index into `sensors`); or as a dict
+    of numpy arrays if as_pointCollection is False.
+
+    Give the box as exactly one of the keywords bbox = (xmin, ymin, xmax, ymax) or bds = [[xmin, xmax],
+    [ymin, ymax]].
 
     strategy: "stats" (default) finds the row groups from the per-cell statistics files; "footer" from the
     row-group footer statistics of geometry.x/y; "dataset" lets pyarrow's dataset scanner prune and filter.
@@ -246,6 +255,11 @@ def read_box(root, sensors, resolution, region, bbox, columns=None, years=None, 
     own threading off ("dataset" uses pyarrow's scanner threads instead)
     """
     from concurrent.futures import ThreadPoolExecutor
+    if (bbox is None) == (bds is None):
+        raise TypeError("read_box: give exactly one of bbox=(xmin, ymin, xmax, ymax) or bds=[[xmin, xmax], [ymin, ymax]]")
+    bbox = box_from_bds(bds) if bds is not None else tuple(float(v) for v in bbox)
+    if bbox[0] > bbox[2] or bbox[1] > bbox[3]:
+        raise ValueError(f"read_box: empty box {bbox} (min > max)")
     if isinstance(sensors, str):
         sensors = [sensors]
     jobs = [(s, f) for s in sensors for f in data_files(root, s, resolution, region, years)]

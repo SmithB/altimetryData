@@ -244,8 +244,9 @@ so reading it means scanning its year file.
 
 ## Reading a box
 
-`altimetryData.read.read_box(root, sensors, resolution, region, bbox, columns=None, threads=4)` returns every
-point inside a projected box, from every year of one or more databases, as one `pointCollection.data` object.
+`altimetryData.read.read_box(root, sensors, resolution, region, bds=[[xmin, xmax], [ymin, ymax]], columns=None,
+threads=4)` returns every point inside a projected box (EPSG:3413 for GL, EPSG:3031 for AA; or give
+`bbox=(xmin, ymin, xmax, ymax)` instead of `bds`), from every year of one or more databases, as one `pointCollection.data` object.
 Its fields are x, y, the requested columns (all by default), and `sensor`, the index into `sensors`; columns a
 sensor lacks are NaN.  The reader works in three steps:
 

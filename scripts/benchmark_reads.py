@@ -40,7 +40,7 @@ def time_box(args, strategy):
     h = args.size / 2
     bbox = (x0 - h, y0 - h, x0 + h, y0 + h)
     t0 = time.perf_counter()
-    D, info = read.read_box(args.root, args.sensors, args.resolution, args.region, bbox, strategy=strategy,
+    D, info = read.read_box(args.root, args.sensors, args.resolution, args.region, bbox=bbox, strategy=strategy,
                             columns=args.columns, threads=args.threads, stats_level=args.stats_level,
                             return_info=True)
     return time.perf_counter() - t0, D, info

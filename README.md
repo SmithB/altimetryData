@@ -40,7 +40,8 @@ python scripts/estimate.py --granules .../inventory/granules.parquet --download_
   and GDAL's `gdal:schema`, so they show in QGIS).
 * `altimetryData.read.read_granule(root, granule_id)` reads every point of one raw granule through the granule
   index, which lists the row groups holding each granule (0.15-0.6 s for an ATM or LVIS granule).
-* `altimetryData.read.read_box(root, sensors, "reduced", region, bbox)` reads every year of a box into one
+* `altimetryData.read.read_box(root, sensors, "reduced", region, bds=[[xmin, xmax], [ymin, ymax]])` (or
+  `bbox=(xmin, ymin, xmax, ymax)`, projected coordinates) reads every year of a box into one
   `pointCollection.data` object on at most 4 threads.  The densest 40 km box (Jakobshavn, 42.5 M reduced
   points, 1993-2019) takes 5.3 s cold and 3.3 s cached.  `scripts/benchmark_reads.py` reproduces the
   timings.
