@@ -228,6 +228,51 @@ tables = read.read_granule(root, granule_id, resolution="native", columns=["geom
 # {"GL": pyarrow.Table, ...}: one table per region, since the regions have different projections
 ```
 
+`read_granule` scans only the indexed row groups, filtering on `granule_id`, on at most `threads` (default 4)
+threads.  Measured on full-resolution files, cold cache:
+
+| granule | points | index | footer statistics only |
+|:--|--:|--:|--:|
+| ATM_wide 2009 (median size) | 1.1 M | 0.15-0.25 s (7 of 64 row groups) | 0.25-0.5 s (29) |
+| ATM_wide 1993 (largest) | 10.4 M | 0.4-0.6 s (41 of 103) | 0.4 s (41) |
+| ATM_narrow 2012 | 1.2 M | 0.2 s (4 of 1085) | 2.1-2.9 s (200) |
+| LVIS 2007 | 4.5 M | 0.3-0.45 s (15 of 16) | 0.3 s (15) |
+| ICESat 2005 (orbit across the ice sheet) | 0.3 M | 0.5 s (123 of 127) | 0.5 s (127) |
+
+A short ATM or LVIS granule is found in a few row groups.  An ICESat granule crosses most of the ice sheet,
+so reading it means scanning its year file.
+
+## Reading a box
+
+`altimetryData.read.read_box(root, sensors, resolution, region, bbox, columns=None, threads=4)` returns every
+point inside a projected box, from every year of one or more databases, as one `pointCollection.data` object.
+Its fields are x, y, the requested columns (all by default), and `sensor`, the index into `sensors`; columns a
+sensor lacks are NaN.  The reader works in three steps:
+
+1. **Find the row groups.**  For each year file, read the finest level of its stats file and keep the cells whose
+   points' x/y range meets the box; their `row_group_start`..`row_group_end` give the row groups to read.  This
+   reads 13% fewer row groups than the `geometry.x/y` footer statistics, because a cell's range is tighter than
+   a row group's.
+2. **Read and decode them.**  Files are read on a pool of `threads` threads with pyarrow's own threading off, so
+   `threads` caps the cores used.
+3. **Copy the points in the box.**  Each selected value is copied once, straight from the Arrow buffers into
+   preallocated output arrays, as one task per (row group, column).
+
+Measured for a 40 x 40 km box at Jakobshavn: 42.5 M reduced points from 34 year files of ATM_wide,
+ATM_narrow, and LVIS, 1993-2019, 4 threads.
+
+| | first read (cold) | later reads (cached) |
+|:--|--:|--:|
+| all 19 fields | 5.3 s | 3.3 s |
+| x, y, h, delta_time, bias, noise, n_fit, slope_x, slope_y, sensor | 5.2 s | 2.2 s |
+| duckdb, 4 threads (numpy arrays only, for comparison) | 7.0 s | 3.3 s |
+
+* About 1.65 rows are decoded per point returned.  Row groups of 4 MB or 2 MB cut that to 1.45 or 1.33 and
+  save 10-15% of the cached time.  But production files would have 2-4x more row groups, and parsing their
+  footers costs about 14 µs per row group, so the data files keep 8 MB row groups.  LZ4 instead of zstd
+  decodes about 10% faster and makes files 9% larger, so zstd is kept.
+* Jakobshavn is about the densest 40 km box in the database.  Read time scales with the number of points.
+
 ## Statistics files
 
 These follow atl06t, with one stats file per data file.  Each S2 level is a separate row group, sorted by

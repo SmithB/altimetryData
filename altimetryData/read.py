@@ -32,12 +32,14 @@ def granule_row_groups(root, sensor, resolution, granule_id):
     return out
 
 
-def read_granule(root, granule_id, resolution="native", columns=None, sensor=None, use_index=True):
+def read_granule(root, granule_id, resolution="native", columns=None, sensor=None, use_index=True, threads=4):
     """
     every point of a granule as {region: pyarrow.Table} (the regions have different projections).  sensor is
-    looked up in granules.parquet if not given.  use_index=False skips the granule index and relies on the
-    granule_id footer statistics of the files of the granule's year(s)
+    looked up in granules.parquet if not given.  With the granule index (default) only the row groups holding the
+    granule are scanned; use_index=False relies on the granule_id footer statistics of the files of the
+    granule's year(s).  The row groups are scanned and filtered on `threads` threads (default 4)
     """
+    from concurrent.futures import ThreadPoolExecutor
     granule_id = int(granule_id)
     if sensor is None or not use_index:
         g = pq.read_table(os.path.join(root, "granules.parquet"), filters=[("granule_id", "=", granule_id)],
@@ -51,22 +53,29 @@ def read_granule(root, granule_id, resolution="native", columns=None, sensor=Non
         # the granule's start year, and the next one in case it runs past midnight on 31 December
         year = int(g[0]["year"])
         groups = {(r, y): None for r in ("GL", "AA") for y in (year, year + 1)}
+    match = pc.field("granule_id") == granule_id
+    want = None if columns is None else list(dict.fromkeys(["granule_id", *columns]))
     out = {}
-    for (region, year), row_groups in sorted(groups.items()):
-        path = db.data_path(root, sensor, resolution, region, year)
-        if not os.path.isfile(path):
-            continue
-        if row_groups is not None:
-            pf = pq.ParquetFile(path)
-            table = pf.read_row_groups(row_groups, columns=None if columns is None else
-                                       list(dict.fromkeys(["granule_id", *columns])))
-            table = table.filter(pc.equal(table.column("granule_id"), pa.scalar(granule_id, pa.uint32())))
-        else:
-            table = ds.dataset(path).to_table(columns=columns, filter=pc.field("granule_id") == granule_id)
-        if columns is not None:
-            table = table.select(columns)
-        if table.num_rows:
-            out[region] = table if region not in out else pa.concat_tables([out[region], table])
+    with ThreadPoolExecutor(max(1, threads)) as pool:
+        for (region, year), row_groups in sorted(groups.items()):
+            path = db.data_path(root, sensor, resolution, region, year)
+            if not os.path.isfile(path):
+                continue
+            frag = next(ds.dataset(path, format="parquet").get_fragments())
+            if row_groups is None:
+                row_groups = [rg.id for rg in frag.subset(match).row_groups]
+            if not row_groups:
+                continue
+            # contiguous slices of the row groups, one per thread, each scanned and filtered single-threaded
+            slices = [s for s in np.array_split(np.asarray(row_groups), min(len(row_groups), max(1, threads)))
+                      if s.size]
+            tables = list(pool.map(lambda rgs: frag.subset(row_group_ids=[int(i) for i in rgs]).to_table(
+                columns=want, filter=match, use_threads=False), slices))
+            table = pa.concat_tables(tables)
+            if columns is not None:
+                table = table.select(columns)
+            if table.num_rows:
+                out[region] = table if region not in out else pa.concat_tables([out[region], table])
     return out
 
 
@@ -95,7 +104,7 @@ def _stats_row_groups(data_file, bbox, level=None):
     # finest available level no finer than requested (default: the finest)
     use = max(v for v in levels if level is None or v <= level) if level is None or min(levels) <= level else min(levels)
     t = pf.read_row_group(levels.index(use), columns=["x_min", "x_max", "y_min", "y_max", "row_group_start",
-                                                     "row_group_end"])
+                                                     "row_group_end"], use_threads=False)
     keep = pc.and_(pc.and_(pc.greater_equal(t.column("x_max"), bbox[0]), pc.less_equal(t.column("x_min"), bbox[2])),
                    pc.and_(pc.greater_equal(t.column("y_max"), bbox[1]), pc.less_equal(t.column("y_min"), bbox[3])))
     t = t.filter(keep)
@@ -106,17 +115,18 @@ def _stats_row_groups(data_file, bbox, level=None):
 
 
 def _read_file_box(path, bbox, columns, strategy, stats_level):
-    """(table of the points in the box, row groups read, rows read) for one data file"""
+    """
+    (table, row groups read, rows read) for one data file.  "dataset" returns only the rows in the box; "stats"
+    and "footer" return whole row groups, which _assemble filters while copying into the output arrays
+    """
     want = None if columns is None else list(dict.fromkeys(["geometry", *columns]))
     if strategy == "dataset":
         frag = next(ds.dataset(path, format="parquet").get_fragments())
         sub = frag.subset(_box_expression(bbox))
         n_rg = len(sub.row_groups)
         t = sub.to_table(columns=want, filter=_box_expression(bbox)) if n_rg else None
-        rows = sum(rg.num_rows for rg in sub.row_groups)
-        return t, n_rg, rows
+        return t, n_rg, sum(rg.num_rows for rg in sub.row_groups)
     if strategy in ("stats", "footer"):
-        pf = pq.ParquetFile(path)
         if strategy == "stats":
             rgs = _stats_row_groups(path, bbox, stats_level)
         else:
@@ -124,22 +134,116 @@ def _read_file_box(path, bbox, columns, strategy, stats_level):
             rgs = [rg.id for rg in frag.subset(_box_expression(bbox)).row_groups]
         if not rgs:
             return None, 0, 0
-        t = pf.read_row_groups(rgs, columns=want, use_threads=True)
-        x, y = db.geometry_xy(t.column("geometry"))
-        mask = (x >= bbox[0]) & (x <= bbox[2]) & (y >= bbox[1]) & (y <= bbox[3])
-        return t.filter(pa.array(mask)), len(rgs), t.num_rows
+        # single-threaded decode: parallelism comes only from read_box's thread pool, so `threads` caps the cores
+        t = pq.ParquetFile(path).read_row_groups(rgs, columns=want, use_threads=False)
+        return t, len(rgs), t.num_rows
     raise ValueError(f"unknown strategy {strategy}")
 
 
-def read_box(root, sensors, resolution, region, bbox, columns=None, years=None, strategy="stats", threads=8,
+def _chunk_index(geometry_chunk, bbox):
+    """indices of the rows of one geometry chunk inside bbox"""
+    x = geometry_chunk.field("x").to_numpy(zero_copy_only=False)
+    y = geometry_chunk.field("y").to_numpy(zero_copy_only=False)
+    return np.flatnonzero((x >= bbox[0]) & (x <= bbox[2]) & (y >= bbox[1]) & (y <= bbox[3]))
+
+
+def _output_dtype(types_by_sensor, has_nulls, n_sensors):
+    """
+    numpy dtype of an output field: the common dtype if every sensor has it without nulls; for floats the widest
+    float (missing values are NaN); otherwise (integers that need NaN) float64
+    """
+    dtypes = {np.dtype(t.to_pandas_dtype()) for t in types_by_sensor}
+    if len(types_by_sensor) == n_sensors and len(dtypes) == 1 and not has_nulls:
+        return dtypes.pop()
+    if all(d.kind == "f" for d in dtypes):
+        return np.result_type(*dtypes)
+    return np.dtype(np.float64)
+
+
+def _assemble(parts, bbox, sensors, threads):
+    """
+    {field: numpy array} of the points in bbox from [(sensor, table, filtered)], copying each selected value once,
+    straight from the Arrow buffers into preallocated output arrays.  The copies run as one task per (chunk,
+    field) on a thread pool, so a few large years do not leave most threads idle
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    pool = ThreadPoolExecutor(max(1, threads))
+    try:
+        # rows to keep in each chunk (row group) of each table
+        def index(part):
+            sensor, t, filtered = part
+            return [np.arange(len(c), dtype=np.int64) if filtered else _chunk_index(c, bbox)
+                    for c in t.column("geometry").chunks]
+        idx = list(pool.map(index, parts))
+        present = [s for s in sensors if any(p[0] == s for p in parts)]
+        # output fields and dtypes
+        types, nulls = {}, set()
+        for sensor in present:
+            schema = next(p[1].schema for p in parts if p[0] == sensor)
+            for f in schema:
+                if f.name != "geometry":
+                    types.setdefault(f.name, []).append(f.type)
+        for sensor, t, _ in parts:
+            nulls.update(n for n in t.column_names if n != "geometry" and t.column(n).null_count)
+        total = sum(i.size for ii in idx for i in ii)
+        out = {"x": np.empty(total), "y": np.empty(total)}
+        for name, ts in types.items():
+            out[name] = np.empty(total, dtype=_output_dtype(ts, name in nulls, len(present)))
+        out["sensor"] = np.empty(total, dtype=np.int8)
+        # one task per (chunk, field)
+        tasks = []
+        pos = 0
+        for (sensor, t, _), ii in zip(parts, idx):
+            names = set(t.column_names)
+            geometry = t.column("geometry").chunks
+            for c, i in enumerate(ii):
+                if not i.size:
+                    continue
+                for name in out:
+                    if name in ("x", "y"):
+                        src = geometry[c].field(name)
+                    elif name == "sensor":
+                        src = sensors.index(sensor)
+                    elif name in names:
+                        src = t.column(name).chunk(c)
+                    else:
+                        src = None
+                    tasks.append((name, src, i, pos))
+                pos += i.size
+
+        def run(task):
+            name, src, i, start = task
+            arr = out[name]
+            if src is None:
+                arr[start:start + i.size] = np.nan
+            elif isinstance(src, int):
+                arr[start:start + i.size] = src
+            else:
+                a = src.to_numpy(zero_copy_only=False)
+                if a.dtype == arr.dtype:
+                    # mode="clip" (the indices are all valid): with the default mode, take buffers the output
+                    # and runs 4x slower on 4 threads
+                    np.take(a, i, out=arr[start:start + i.size], mode="clip")
+                else:
+                    arr[start:start + i.size] = np.take(a, i, mode="clip")
+        list(pool.map(run, tasks))
+    finally:
+        pool.shutdown()
+    return out
+
+
+def read_box(root, sensors, resolution, region, bbox, columns=None, years=None, strategy="stats", threads=4,
              stats_level=None, as_pointCollection=True, return_info=False):
     """
     every point within bbox = (xmin, ymin, xmax, ymax) (projected coordinates of the region) from every year of
-    the databases of `sensors`, as one pointCollection.data object (fields x, y, the requested columns, and
-    sensor: index into `sensors`), or as {sensor: pyarrow.Table} if as_pointCollection is False.
+    the databases of `sensors`, as one pointCollection.data object with fields x, y, the requested columns (all
+    by default; NaN where a sensor lacks a column), and sensor (index into `sensors`); or as a dict of numpy
+    arrays if as_pointCollection is False.
 
-    strategy: "stats" finds the row groups from the per-cell statistics files; "footer" from the row-group
-    footer statistics of geometry.x/y; "dataset" lets pyarrow's dataset scanner prune and filter
+    strategy: "stats" (default) finds the row groups from the per-cell statistics files; "footer" from the
+    row-group footer statistics of geometry.x/y; "dataset" lets pyarrow's dataset scanner prune and filter.
+    threads caps the cores used (default 4): files are read and decoded on a pool of that size, with pyarrow's
+    own threading off ("dataset" uses pyarrow's scanner threads instead)
     """
     from concurrent.futures import ThreadPoolExecutor
     if isinstance(sensors, str):
@@ -147,50 +251,13 @@ def read_box(root, sensors, resolution, region, bbox, columns=None, years=None, 
     jobs = [(s, f) for s in sensors for f in data_files(root, s, resolution, region, years)]
     with ThreadPoolExecutor(max(1, threads)) as pool:
         results = list(pool.map(lambda job: _read_file_box(job[1], bbox, columns, strategy, stats_level), jobs))
-    tables = {}
-    info = {"files": len(jobs), "row_groups_read": 0, "rows_read": 0}
-    for (sensor, _), (t, n_rg, rows) in zip(jobs, results):
-        info["row_groups_read"] += n_rg
-        info["rows_read"] += rows
-        if t is not None and t.num_rows:
-            tables.setdefault(sensor, []).append(t)
-    tables = {s: pa.concat_tables(v) for s, v in tables.items()}
-    out = to_pointCollection(tables, sensors, region) if as_pointCollection else tables
-    return (out, info) if return_info else out
-
-
-def _numpy(column):
-    a = column.combine_chunks() if isinstance(column, pa.ChunkedArray) else column
-    if a.null_count:
-        a = a.cast(pa.float64()) if not pa.types.is_floating(a.type) else a
-        return a.to_numpy(zero_copy_only=False)
-    return a.to_numpy(zero_copy_only=False)
-
-
-def to_pointCollection(tables, sensors, region):
-    """one pointCollection.data object from {sensor: table}: fields x, y, every column (NaN where a sensor lacks
-    it), and sensor (index into `sensors`)"""
-    import pointCollection as pc_
-    fields, n = {}, {}
-    for s, t in tables.items():
-        n[s] = t.num_rows
-        x, y = db.geometry_xy(t.column("geometry"))
-        fields.setdefault("x", {})[s] = x
-        fields.setdefault("y", {})[s] = y
-        for name in t.column_names:
-            if name != "geometry":
-                fields.setdefault(name, {})[s] = _numpy(t.column(name))
-    order = [s for s in sensors if s in tables]
-    dd = {}
-    for name, parts in fields.items():
-        if len(parts) == len(order) and len({parts[s].dtype for s in order}) == 1:
-            dd[name] = np.concatenate([parts[s] for s in order]) if order else np.zeros(0)
-        else:
-            dd[name] = np.concatenate([parts[s].astype(np.float64) if s in parts else np.full(n[s], np.nan)
-                                       for s in order])
-    dd["sensor"] = np.concatenate([np.full(n[s], sensors.index(s), dtype=np.int8) for s in order]) if order \
-        else np.zeros(0, np.int8)
-    if not order:
-        dd = {"x": np.zeros(0), "y": np.zeros(0), "sensor": dd["sensor"]}
-    from .collections import REGIONS
-    return pc_.data(EPSG=REGIONS[region]["epsg"]).from_dict(dd)
+    info = {"files": len(jobs), "row_groups_read": sum(r[1] for r in results),
+            "rows_read": sum(r[2] for r in results)}
+    parts = [(sensor, t, strategy == "dataset") for (sensor, _), (t, _, _) in zip(jobs, results)
+             if t is not None and t.num_rows]
+    dd = _assemble(parts, bbox, sensors, threads)
+    if as_pointCollection:
+        import pointCollection as pc_
+        from .collections import REGIONS
+        dd = pc_.data(EPSG=REGIONS[region]["epsg"]).from_dict(dd)
+    return (dd, info) if return_info else dd

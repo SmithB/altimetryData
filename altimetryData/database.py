@@ -273,7 +273,7 @@ def _gdal_schema(sensor, resolution):
 
 def build_database_file(root, sensor, resolution, region, year, work_root=None, extra_metadata=None, verbose=False,
                         target_bytes=ROW_GROUP_TARGET_BYTES, max_row_groups=MAX_ROW_GROUPS, bloom_filters=None,
-                        granule_commits=None):
+                        granule_commits=None, compression="zstd", compression_level=COMPRESSION_LEVEL):
     """
     assemble the partitions of one sensor/resolution/region/year into one optimized GeoParquet file, and write
     its granule index (index_path): one row per (granule_id, row_group) giving the rows of each granule in each
@@ -315,7 +315,7 @@ def build_database_file(root, sensor, resolution, region, year, work_root=None, 
     with pa.OSFile(tmp_file, "wb") as sink:
         with pq.ParquetWriter(sink, schema,
                               sorting_columns=[pq.SortingColumn(schema.get_field_index("cell_id"))],
-                              compression="zstd", compression_level=COMPRESSION_LEVEL,
+                              compression=compression, compression_level=compression_level,
                               use_dictionary=dictionary, use_byte_stream_split=False, column_encoding=encoding,
                               write_statistics=sc.FOOTER_STATS,
                               **({"bloom_filter_options": bloom_filters} if bloom_filters else {})) as writer:

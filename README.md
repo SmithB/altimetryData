@@ -39,7 +39,11 @@ python scripts/estimate.py --granules .../inventory/granules.parquet --download_
 * Each data file's columns carry descriptions and units (Arrow field metadata, the `altimetry_data` metadata,
   and GDAL's `gdal:schema`, so they show in QGIS).
 * `altimetryData.read.read_granule(root, granule_id)` reads every point of one raw granule through the granule
-  index, which lists the row groups holding each granule.
+  index, which lists the row groups holding each granule (0.15-0.6 s for an ATM or LVIS granule).
+* `altimetryData.read.read_box(root, sensors, "reduced", region, bbox)` reads every year of a box into one
+  `pointCollection.data` object on at most 4 threads.  The densest 40 km box (Jakobshavn, 42.5 M reduced
+  points, 1993-2019) takes 5.3 s cold and 3.3 s cached.  `scripts/benchmark_reads.py` reproduces the
+  timings.
 * `build_database.py` builds only those sensor/years whose granules have all been processed, so a partial run
   cannot overwrite a year with a subset.  It deletes the partitions it has built from unless you pass
   `--keep_partitions`.

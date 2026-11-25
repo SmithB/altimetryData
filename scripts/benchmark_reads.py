@@ -59,7 +59,7 @@ def main():
     parser.add_argument("--columns", nargs="+", default=None)
     parser.add_argument("--strategies", nargs="+", default=["dataset", "footer", "stats"])
     parser.add_argument("--stats_level", type=int, default=None)
-    parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--granules", nargs="+", type=int)
     parser.add_argument("--cold", action="store_true")
     parser.add_argument("--repeat", type=int, default=3)

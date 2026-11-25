@@ -121,3 +121,42 @@ def test_granule_index_and_read(tmp_path):
         got = read.read_granule(root, 1, columns=["source_index", "h"], use_index=use_index)
         assert list(got) == ["GL"]
         assert np.array_equal(np.sort(got["GL"].column("source_index").to_numpy()), np.arange(40000))
+
+
+def test_read_box_matches_brute_force(tmp_path):
+    root = str(tmp_path)
+    for gid, sensor in [(0, "ATM_wide"), (1, "ATM_wide"), (2, "LVIS")]:
+        native = _granule(gid, gid)
+        if sensor == "LVIS":
+            native.pop("rcv_sigstr")      # LVIS has no rcv_sigstr; its lfid/shotnumber stay null
+        db.write_partitions(db.make_table(native, sensor, "reduced", "GL"), root, sensor, "reduced", "GL", gid)
+    for sensor in ("ATM_wide", "LVIS"):
+        f = db.build_database_file(root, sensor, "reduced", "GL", 2011, target_bytes=60_000)
+        db.build_stats(f, db.stats_path(root, sensor, "reduced", "GL", 2011))
+    x0, y0 = db.project(np.array([-49.4]), np.array([69.15]), "GL")
+    bbox = (x0[0] - 3000, y0[0] - 3000, x0[0] + 3000, y0[0] + 3000)
+    ref = {}
+    for sensor in ("ATM_wide", "LVIS"):
+        t = pq.read_table(db.data_path(root, sensor, "reduced", "GL", 2011))
+        x, y = db.geometry_xy(t.column("geometry"))
+        m = (x >= bbox[0]) & (x <= bbox[2]) & (y >= bbox[1]) & (y <= bbox[3])
+        ref[sensor] = {"x": x[m], "h": t.column("h").to_numpy()[m], "source_index": t.column("source_index").to_numpy()[m]}
+    assert 0 < ref["ATM_wide"]["x"].size < 80000 and ref["LVIS"]["x"].size > 0
+    for strategy in ("stats", "footer", "dataset"):
+        dd, info = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox, strategy=strategy, threads=3,
+                                 as_pointCollection=False, return_info=True)
+        assert info["rows_read"] < 80000 + 40000        # pruning skipped some row groups
+        for k, sensor in enumerate(("ATM_wide", "LVIS")):
+            sel = dd["sensor"] == k
+            order = np.argsort(dd["source_index"][sel] + 1e6 * dd["granule_id"][sel])
+            r_order = np.argsort(ref[sensor]["source_index"])
+            assert sel.sum() == ref[sensor]["x"].size, strategy
+            if sensor == "ATM_wide":
+                assert np.array_equal(np.sort(dd["x"][sel]), np.sort(ref[sensor]["x"]))
+            else:
+                assert np.array_equal(dd["h"][sel][order], ref[sensor]["h"][r_order])
+        assert dd["rcv_sigstr"].dtype == np.float64 and np.isnan(dd["rcv_sigstr"][dd["sensor"] == 1]).all()
+        assert np.isnan(dd["lfid"]).all() and dd["h"].dtype == np.float32 and dd["cell_id"].dtype == np.uint64
+    pc_ = pytest.importorskip("pointCollection")
+    D = read.read_box(root, ["ATM_wide", "LVIS"], "reduced", "GL", bbox)
+    assert D.size == sum(v["x"].size for v in ref.values()) and "bias" in D.fields
