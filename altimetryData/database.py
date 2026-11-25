@@ -140,6 +140,21 @@ def project(lon, lat, region):
     return np.asarray(x), np.asarray(y)
 
 
+def box_around(region, lon, lat, size):
+    """(xmin, ymin, xmax, ymax), a size x size (m) box in the region's projection centered on lon, lat"""
+    x, y = project(np.array([lon], dtype=float), np.array([lat], dtype=float), region)
+    h = size / 2
+    return (float(x[0]) - h, float(y[0]) - h, float(x[0]) + h, float(y[0]) + h)
+
+
+def box_lonlat_bounds(region, bbox, n=41):
+    """(lon_min, lat_min, lon_max, lat_max) enclosing a projected box (sampled on a grid; fine for boxes that
+    do not contain a pole or cross the antimeridian)"""
+    X, Y = np.meshgrid(np.linspace(bbox[0], bbox[2], n), np.linspace(bbox[1], bbox[3], n))
+    lon, lat = unproject(X.ravel(), Y.ravel(), region, threads=1)
+    return float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max())
+
+
 def unproject(x, y, region, threads=THREADS):
     """longitude, latitude (degrees) of projected x, y; chunks run in threads (PROJ releases the GIL)"""
     x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)

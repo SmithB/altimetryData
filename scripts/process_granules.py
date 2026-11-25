@@ -22,6 +22,7 @@ import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+import numpy as np
 import pandas as pd
 
 _STATE = {}
@@ -74,8 +75,25 @@ def run_one(granule, work_root, work_dir, keep_raw, local_dir, code_commit):
     return status
 
 
-def select(granules, sensors=None, years=None, regions=None):
+def in_areas(granules, areas):
+    """granules whose CMR bounding box meets any of the areas [(region, lon, lat, size_km)]; granules without
+    an extent in CMR (GLAH12) are kept"""
+    from altimetryData import database as db
+    keep = granules["lat_min"].isna().to_numpy().copy()
+    for region, lon, lat, size_km in areas:
+        lon0, lat0, lon1, lat1 = db.box_lonlat_bounds(region, db.box_around(region, float(lon), float(lat),
+                                                                            float(size_km) * 1e3))
+        lo, hi = granules["lon_min"].to_numpy(), granules["lon_max"].to_numpy()
+        wraps = lo > hi       # crosses the antimeridian
+        lon_ok = np.where(wraps, (hi >= lon0) | (lo <= lon1), (hi >= lon0) & (lo <= lon1))
+        keep |= lon_ok & (granules["lat_max"].to_numpy() >= lat0) & (granules["lat_min"].to_numpy() <= lat1)
+    return granules[keep]
+
+
+def select(granules, sensors=None, years=None, regions=None, areas=None):
     g = granules
+    if areas:
+        g = in_areas(g, areas)
     if sensors:
         g = g[g["sensor"].isin(sensors)]
     if years:
@@ -95,6 +113,9 @@ def main():
     parser.add_argument("--sensors", nargs="+")
     parser.add_argument("--years", nargs="+", type=int)
     parser.add_argument("--regions", nargs="+")
+    parser.add_argument("--area", nargs=4, action="append", metavar=("REGION", "LON", "LAT", "SIZE_KM"),
+                        help="only granules whose CMR bounding box meets a SIZE_KM box centered on LON, LAT "
+                             "(repeatable)")
     parser.add_argument("--workers", type=int, default=os.cpu_count())
     parser.add_argument("--threads_per_worker", type=int, default=1)
     parser.add_argument("--transport", choices=["https", "s3"], default="https")
@@ -112,7 +133,7 @@ def main():
     work_root = args.work_root or db.default_work_root(args.root)
     work_dir = os.path.join(work_root, "raw")
     os.makedirs(work_dir, exist_ok=True)
-    granules = select(pd.read_parquet(args.granules), args.sensors, args.years, args.regions)
+    granules = select(pd.read_parquet(args.granules), args.sensors, args.years, args.regions, args.area)
     todo = [row for _, row in granules.iterrows() if not os.path.isfile(_status_file(work_root, row))]
     if args.limit:
         todo = todo[:args.limit]
