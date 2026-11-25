@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "altimetryData"
+version = "0.1.0"
+description = "GeoParquet databases of ATM, ICESat, and LVIS altimetry over Greenland and Antarctica, in ITRF2020"
+authors = [{name = "Ben Smith"}]
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "numba",
+    "pandas",
+    "pyarrow>=15",
+    "pyproj>=3.6",
+    "h5py",
+    "requests",
+]
+
+[project.optional-dependencies]
+geo = ["geopandas"]
+s3 = ["boto3"]
+cli = ["pointCollection"]   # only scripts/reduce_ATM.py writes pointCollection indexedH5 output
+dev = ["pytest", "scipy", "s2sphere"]
+
+[tool.setuptools.packages.find]
+include = ["altimetryData*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
