@@ -129,8 +129,9 @@ Measured on single granules (B/row, with `cell_id` stored at the sort level):
 
 * **ICESat frame:** GLAH12 r34 is taken to be ITRF2008 (product documentation); the granules carry no frame
   attribute.
-* **LVIS frame:** the granules state none, so the IGS frame of the collection date is used: ITRF2005 for 2007,
-  ITRF2008 for 2009–2015, ITRF2014 for 2017.  Recorded as `igs_default`; worth confirming with the LVIS team.
+* **LVIS frame:** from the NSIDC user guides: ITRF2000 for ILVIS2 v1 (2009-2015) and ILVGH2 (2013), ITRF2008
+  for ILVIS2 v2 (2017).  BLVIS2 (2007, 4 granules) has no user guide and is assumed to be ITRF2000 like ILVIS2
+  v1 (`frame_source` records which).  At Jakobshavn the ITRF2000 to ITRF2020 change adds 12-20 mm to heights.
 * **GLAS time:** `d_UTCTime_40` is treated as UTC without leap seconds, a ±1 s ambiguity after the 2005 and 2008
   leap seconds.
 * **LVIS v2:** the three unnamed trailing columns are read as CHANNEL_ZT, CHANNEL_ZG, CHANNEL_RH.

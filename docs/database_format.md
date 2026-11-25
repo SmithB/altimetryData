@@ -191,7 +191,9 @@ The source frame of each granule is recorded in `granules.parquet` (`frame`, `fr
 | ATM HDF5 (2013–2019) | `ancillary_data/reference_frame` in the granule | `granule` |
 | ATM qi (1993–2012) | the `itrfNN` tag of the trajectory named in the processing header, e.g. `..._itrf05_...` | `header` |
 | ICESat GLAH12 r34 | ITRF2008, TOPEX/Poseidon ellipsoid (TOPEX→WGS84 agrees with d_deltaEllip to 0.5 mm) | `product` |
-| LVIS | the frame of the IGS orbits in use on the collection date (the granules do not state a frame) | `igs_default` |
+| LVIS ILVIS2 v1 (2009-2015), ILVGH2 v1 (2013) | ITRF2000, WGS84 ellipsoid (NSIDC user guides, "Projection and Grid Description") | `user_guide` |
+| LVIS ILVIS2 v2 (2017) | ITRF2008 (user guide Table 3: EPSG:5332) | `user_guide` |
+| LVIS BLVIS2 (2007) | ITRF2000, assumed: no user guide, processed in 2008 with the ILVIS2 v1 system | `assumed (as ILVIS2 v1)` |
 | any granule without the above | IGS frame on the date | `igs_default` |
 
 ## Granule lookup table (`granules.parquet`)

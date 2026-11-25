@@ -37,3 +37,11 @@ def test_frames():
     assert frames.atm_frame(data, np.datetime64("2011-04-12")) == ("ITRF2005", "header")
     data = {"ancillary": {"reference_frame": np.array([b"ITRF2008"])}}
     assert frames.atm_frame(data, np.datetime64("2016-10-20")) == ("ITRF2008", "granule")
+
+
+def test_lvis_frames_from_user_guides():
+    from altimetryData import granule as gr
+    from altimetryData.collections import COLLECTIONS
+    lvis = [(c.short_name, c.version) for c in COLLECTIONS if c.sensor == "LVIS"]
+    assert set(lvis) == set(gr.LVIS_FRAMES)          # every LVIS collection has a frame
+    assert gr.LVIS_FRAMES[("ILVIS2", "1")][0] == "ITRF2000" and gr.LVIS_FRAMES[("ILVIS2", "2")][0] == "ITRF2008"

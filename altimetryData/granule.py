@@ -27,6 +27,18 @@ REDUCE_PARAMS = {
 # frames fixed by product documentation (used when the granule itself does not say)
 PRODUCT_FRAMES = {"GLAH12": ("ITRF2008", "TOPEX")}
 
+# LVIS reference frames by (short_name, version), from the NSIDC user guides; the granules do not state a frame.
+# ILVIS2 v1 and ILVGH2 v1: "International Terrestrial Reference Frame (ITRF 2000), WGS-84 Ellipsoid" (section
+# 1.3.3 / 1.3.2).  ILVIS2 v2: datum ITRF 2008, EPSG:5332 (Table 3; GRS80 differs from WGS84 by 0.1 mm).
+# BLVIS2 (2007) has no user guide; it was processed in 2008 with the same system as ILVIS2 v1, so ITRF2000 is
+# assumed and recorded as such.
+LVIS_FRAMES = {
+    ("ILVIS2", "1"): ("ITRF2000", "user_guide"),
+    ("ILVGH2", "1"): ("ITRF2000", "user_guide"),
+    ("ILVIS2", "2"): ("ITRF2008", "user_guide"),
+    ("BLVIS2", "1"): ("ITRF2000", "assumed (as ILVIS2 v1)"),
+}
+
 
 def _region_masks(lat):
     return {code: (lat >= r["lat_min"]) & (lat <= r["lat_max"]) for code, r in REGIONS.items()}
@@ -142,7 +154,8 @@ def process_lvis(path, granule, sensor, timings):
         (np.abs(data["elevation"]) < 1.0e4)
     delta_time = timeref.delta_time_from_gps(data["gps_seconds"][valid])
     date = timeref.gps_to_utc_datetime(data["gps_seconds"][:1])[0] if n else np.datetime64("NaT")
-    frame, frame_source = frames.igs_frame(date), "igs_default"
+    frame, frame_source = LVIS_FRAMES.get((granule.get("short_name"), str(granule.get("version"))),
+                                          (frames.igs_frame(date), "igs_default"))
     lon, lat, h, dh = _correct(data["longitude"][valid], data["latitude"][valid], data["elevation"][valid],
                                delta_time, frame, "WGS84")
     timings["frame"] = time.perf_counter() - t
