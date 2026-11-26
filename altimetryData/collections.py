@@ -5,6 +5,7 @@ Every collection listed here is hosted in NASA Earthdata Cloud (provider NSIDC_C
 same granule can be fetched over HTTPS from anywhere or read directly from S3 by compute running in us-west-2.
 """
 
+import re
 from dataclasses import dataclass
 
 CMR_PROVIDER = "NSIDC_CPRD"
@@ -17,6 +18,10 @@ class Collection:
     version: str       # CMR version_id, as CMR spells it
     fmt: str           # qi, h5, or txt: which reader to use
     instrument: str    # recorded in the granule table and the rows (e.g. LVIS vs LVIS on the Global Hawk)
+    granule_pattern: str = None   # if set, only granules whose names match this regex (re.match) are used
+
+    def accepts(self, granule_name):
+        return self.granule_pattern is None or re.match(self.granule_pattern, granule_name) is not None
 
 
 COLLECTIONS = [
@@ -32,6 +37,10 @@ COLLECTIONS = [
     Collection("LVIS", "BLVIS2", "1", "txt", "LVIS"),     # pre-IceBridge, Greenland 2007
     Collection("LVIS", "ILVIS2", "1", "txt", "LVIS"),     # IceBridge, 2009-2015
     Collection("LVIS", "ILVIS2", "2", "txt", "LVIS"),     # IceBridge, Greenland 2017
+    # LVIS Facility (the instrument of ILVIS2 v2; LFIDs start with 19): only the ice-surface ("IS") files, i.e.
+    # Greenland and the Arctic in 2022 (GL2022) and 2024 (ARCSIX2024).  The other LVISF2 files are land and
+    # vegetation surveys (ABoVE, GEDI, BioSCape, SARP, ...) in a different format.
+    Collection("LVIS", "LVISF2", "1", "txt", "LVIS", granule_pattern=r"LVISF2_IS_"),
     # LVIS-GH: a second LVIS instrument (designed for the Global Hawk) flown beside LVIS in fall 2013; separate
     Collection("LVIS_GH", "ILVGH2", "1", "txt", "LVIS_GH"),
 ]

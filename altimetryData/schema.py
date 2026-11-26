@@ -66,15 +66,15 @@ ICESAT_NATIVE = [
 ]
 
 LVIS_NATIVE = [
-    ("z_high", pa.float32()),         # center of the highest mode (ELEVATION_HIGH / ZH), corrected like h
+    ("z_high", pa.float32()),         # center of the highest mode (ELEVATION_HIGH / ZH / Z_HIGH), corrected like h
     ("z_top", pa.float32()),          # highest detected return (ZT, v2 only), corrected like h
     ("z_centroid", pa.float32()),     # waveform centroid (ELEVATION_CENTROID, v1 only), corrected like h
     ("rh50", pa.float32()),           # v2 and .lge only
-    ("range", pa.float32()),          # v2 only
-    ("incident_angle", pa.float32()), # v2 only
-    ("azimuth", pa.float32()),        # v2 only
-    ("complexity", pa.float32()),     # v2 only
-    ("channel_zg", pa.int8()),        # v2 only
+    ("range", pa.float32()),          # ILVIS2 v2 and LVISF2 (as are the next four)
+    ("incident_angle", pa.float32()),
+    ("azimuth", pa.float32()),
+    ("complexity", pa.float32()),
+    ("channel_zg", pa.int8()),
     ("lfid", pa.int64()),
     ("shotnumber", pa.int64()),
 ]
@@ -166,21 +166,21 @@ DESCRIPTIONS = {
     "laser": ("GLAS laser (1, 2, or 3)", ""),
     "track": ("ICESat reference track (GLAH12 i_track)", ""),
     # LVIS
-    "z_high": ("center of the highest waveform mode (ELEVATION_HIGH / ZH), corrected like h", "m"),
+    "z_high": ("center of the highest waveform mode (ELEVATION_HIGH / ZH / Z_HIGH), corrected like h", "m"),
     "z_top": ("highest detected return (ZT; ILVIS2 v2 only), corrected like h", "m"),
     "z_centroid": ("waveform centroid (ELEVATION_CENTROID; ILVIS2 v1 and ILVGH2 only), corrected like h", "m"),
     "rh50": ("height above the lowest mode at which 50% of the waveform energy is reached (ILVIS2 v2 and BLVIS2)",
              "m"),
-    "range": ("distance from the instrument to the lowest mode (ILVIS2 v2 only)", "m"),
-    "incident_angle": ("off-nadir incidence angle of the shot (ILVIS2 v2 only)", "degrees"),
-    "complexity": ("waveform complexity metric (ILVIS2 v2 only)", ""),
-    "channel_zg": ("LVIS channel used for ZG (ILVIS2 v2 only)", ""),
+    "range": ("distance from the instrument to the lowest mode (ILVIS2 v2 and LVISF2)", "m"),
+    "incident_angle": ("off-nadir incidence angle of the shot (ILVIS2 v2 and LVISF2)", "degrees"),
+    "complexity": ("waveform complexity metric (ILVIS2 v2 and LVISF2)", ""),
+    "channel_zg": ("LVIS channel used for the lowest mode (CHANNEL_ZG in ILVIS2 v2, CHANNEL in LVISF2)", ""),
     "lfid": ("LVIS file id: digits 3-7 are the Modified Julian Date, the last three count the instrument's files; "
              "lfid with shotnumber identifies a shot", ""),
     "shotnumber": ("LVIS shot number within the instrument file", ""),
 }
 SENSOR_DESCRIPTIONS = {
-    "LVIS": {"azimuth": ("azimuth of the shot (ILVIS2 v2 only)", "degrees")},
+    "LVIS": {"azimuth": ("azimuth of the shot (ILVIS2 v2 and LVISF2)", "degrees")},
     "LVIS_GH": {"azimuth": ("azimuth of the shot (not in ILVGH2)", "degrees")},
 }
 

@@ -31,12 +31,14 @@ PRODUCT_FRAMES = {"GLAH12": ("ITRF2008", "TOPEX")}
 # LVIS reference frames by (short_name, version), from the NSIDC user guides; the granules do not state a frame.
 # ILVIS2 v1 and ILVGH2 v1: "International Terrestrial Reference Frame (ITRF 2000), WGS-84 Ellipsoid" (section
 # 1.3.3 / 1.3.2).  ILVIS2 v2: datum ITRF 2008, EPSG:5332 (Table 3; GRS80 differs from WGS84 by 0.1 mm).
+# LVISF2 v1 (LVIS Facility, 2018-): datum ITRF 2008, EPSG:5332 (user guide Table 2, "Geolocation Details").
 # BLVIS2 (2007) has no user guide; it was processed in 2008 with the same system as ILVIS2 v1, so ITRF2000 is
 # assumed and recorded as such.
 LVIS_FRAMES = {
     ("ILVIS2", "1"): ("ITRF2000", "user_guide"),
     ("ILVGH2", "1"): ("ITRF2000", "user_guide"),
     ("ILVIS2", "2"): ("ITRF2008", "user_guide"),
+    ("LVISF2", "1"): ("ITRF2008", "user_guide"),
     ("BLVIS2", "1"): ("ITRF2000", "assumed (as ILVIS2 v1)"),
 }
 

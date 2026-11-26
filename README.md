@@ -137,11 +137,15 @@ Measured on single granules (B/row, with `cell_id` stored at the sort level):
 * **ICESat frame:** GLAH12 r34 is taken to be ITRF2008 (product documentation); the granules carry no frame
   attribute.
 * **LVIS frame:** from the NSIDC user guides: ITRF2000 for ILVIS2 v1 (2009-2015) and ILVGH2 (2013), ITRF2008
-  for ILVIS2 v2 (2017).  BLVIS2 (2007, 4 granules) has no user guide and is assumed to be ITRF2000 like ILVIS2
+  for ILVIS2 v2 (2017) and LVISF2 (2022, 2024).  BLVIS2 (2007, 4 granules) has no user guide and is assumed to be ITRF2000 like ILVIS2
   v1 (`frame_source` records which).  At Jakobshavn the ITRF2000 to ITRF2020 change adds 12-20 mm to heights.
 * **GLAS time:** `d_UTCTime_40` is treated as UTC without leap seconds, a ±1 s ambiguity after the 2005 and 2008
   leap seconds.
 * **LVIS v2:** the three unnamed trailing columns are read as CHANNEL_ZT, CHANNEL_ZG, CHANNEL_RH.
+* **LVIS 2022 and 2024:** from the LVIS Facility collection LVISF2 v1, ice-surface (`LVISF2_IS_*`) files only:
+  GL2022 (April and July 2022) and ARCSIX2024 (May-August 2024), mostly from Pituffik, over the ice sheet and
+  Arctic sea ice.  It is the instrument that flew ILVIS2 v2 in 2017 (`lfid` prefix 19), so it is part of `LVIS`.
+  The rest of LVISF2 (ABoVE, GEDI, BioSCape, SARP, and transit land files) is left out.
 * **BLATM1B:** all pre-IceBridge ATM is classed as `ATM_wide` (no flight date has two transceivers).
 * **LVIS and LVIS_GH** are separate databases: two instruments on the same aircraft in fall 2013 (different
   `lfid` prefixes, no shared shots, tracks 180–280 m apart).  Both reduce with 20 m bins.

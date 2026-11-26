@@ -16,7 +16,7 @@ under [Differences from atl06t](#differences-from-atl06t).
 
 * `root` is `/Volumes/ice1/ben/oib_database/parquet`.
 * `sensor`: `ATM_wide` (BLATM1B, ILATM1B), `ATM_narrow` (ILNSA1B), `ICESat` (GLAH12 r34), `LVIS` (BLVIS2,
-  ILVIS2), or `LVIS_GH` (ILVGH2: the second LVIS instrument, flown beside LVIS in fall 2013).
+  ILVIS2, and the ice-surface files of LVISF2 for 2022 and 2024), or `LVIS_GH` (ILVGH2: the second LVIS instrument, flown beside LVIS in fall 2013).
 * `resolution`: `native` (every valid point) or `reduced` (block-median decimated points with local plane-fit
   statistics; ATM and LVIS only).
 * `region`: `Arctic`, every point at or north of 59°N, projected to EPSG:3413 (Greenland, but also Arctic sea ice,
@@ -146,12 +146,18 @@ the surface near Summit); filter with the flags.
 
 ### LVIS (`LVIS`, `LVIS_GH`)
 
-`h` is the center of the lowest mode: `ELEVATION_LOW` in ILVIS2 v1 and ILVGH2, `ZG` in ILVIS2 v2 and BLVIS2.  The
-v2 header states that these are the same quantity.
+`h` is the center of the lowest mode: `ELEVATION_LOW` in ILVIS2 v1 and ILVGH2, `ZG` in ILVIS2 v2 and BLVIS2, and
+`Z_LOW` in LVISF2.  The v2 header states that the first two are the same quantity.
 
-Native: `z_high` (center of the highest mode, ELEVATION_HIGH / ZH), `z_top` (highest detected return, ZT; v2
-only), and `z_centroid` (v1 only).  All three are corrected like `h`.  Also `rh50`, `range`, `incident_angle`,
-`azimuth`, `complexity`, `channel_zg` (v2 only, where present), `lfid`, and `shotnumber`.  `lfid` is the LVIS
+LVIS 2022 and 2024 come from LVISF2 v1 (LVIS Facility, the instrument of ILVIS2 v2), ice-surface files
+(`LVISF2_IS_*`) only: campaigns GL2022 and ARCSIX2024.  Their columns follow the LVISF2 user guide, Table B-2.  The
+peak-mode (`*_MAXAMP`) and alternate-lowest-mode (`*_LOW_ALT`) positions, `SENSITIVITY`, and `ENERGY1-3` are not
+stored.
+
+Native: `z_high` (center of the highest mode, ELEVATION_HIGH / ZH / Z_HIGH), `z_top` (highest detected return,
+ZT; ILVIS2 v2 only), and `z_centroid` (v1 only).  All three are corrected like `h`.  Also `rh50` (ILVIS2 v2 and
+BLVIS2), `range`, `incident_angle`, `azimuth`, `complexity`, `channel_zg` (ILVIS2 v2 and LVISF2; LVISF2's
+`CHANNEL`), `lfid`, and `shotnumber`.  Float columns a source lacks are NaN; integer ones are null.  `lfid` is the LVIS
 file id: digits 3–7 are the Modified Julian Date of the flight and the last three count the instrument's files.
 `lfid` with `shotnumber` identifies a shot uniquely.
 
@@ -193,6 +199,7 @@ The source frame of each granule is recorded in `granules.parquet` (`frame`, `fr
 | ICESat GLAH12 r34 | ITRF2008, TOPEX/Poseidon ellipsoid (TOPEX→WGS84 agrees with d_deltaEllip to 0.5 mm) | `product` |
 | LVIS ILVIS2 v1 (2009-2015), ILVGH2 v1 (2013) | ITRF2000, WGS84 ellipsoid (NSIDC user guides, "Projection and Grid Description") | `user_guide` |
 | LVIS ILVIS2 v2 (2017) | ITRF2008 (user guide Table 3: EPSG:5332) | `user_guide` |
+| LVIS LVISF2 v1 (2022, 2024) | ITRF2008 (user guide Table 2: EPSG:5332) | `user_guide` |
 | LVIS BLVIS2 (2007) | ITRF2000, assumed: no user guide, processed in 2008 with the ILVIS2 v1 system | `assumed (as ILVIS2 v1)` |
 | any granule without the above | IGS frame on the date | `igs_default` |
 

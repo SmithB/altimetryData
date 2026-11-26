@@ -1,15 +1,18 @@
 """
 Readers for LVIS L2 granules.
 
-Three formats:
+Four formats:
   * ILVIS2 v1 and ILVGH2 text: LVIS_LFID SHOTNUMBER TIME and centroid / low / high longitude, latitude, elevation;
   * ILVIS2 v2 text: LFID SHOTNUMBER TIME GLON GLAT ZG HLON HLAT ZH TLON TLAT ZT RH10..RH100 AZIMUTH
     INCIDENTANGLE RANGE COMPLEXITY, followed by three columns the header does not name (taken here to be
     CHANNEL_ZT, CHANNEL_ZG, CHANNEL_RH, as in the LVIS-Facility L2 documentation);
+  * LVISF2 ice-surface text (LVISF2_IS_*): LFID SHOTNUMBER TIME, longitude / latitude / elevation of the lowest
+    (LON_LOW, LAT_LOW, Z_LOW), peak (_MAXAMP), and highest (_HIGH) modes and of an alternate lowest mode (_LOW_ALT),
+    AZIMUTH INCIDENTANGLE RANGE COMPLEXITY SENSITIVITY ENERGY1-3 CHANNEL (LVISF2 user guide, Table B-2);
   * BLVIS2 .lge binary: big-endian 52-byte records (lfid, shotnumber, time, glon, glat, zg, rh25, rh50, rh75, rh100).
 
 The v2 header says the earlier "low" and "high" elevations are the v2 zg and zh (the centers of the lowest and
-highest modes), so h is ELEVATION_LOW / ZG for every format.  TIME is UTC seconds of day on the date in the
+highest modes), so h is ELEVATION_LOW / ZG / Z_LOW for every format.  TIME is UTC seconds of day on the date in the
 file name; times that wrap past midnight are moved to the next day.
 """
 
@@ -20,7 +23,8 @@ import pandas as pd
 
 from .. import timeref
 
-_TXT_NAME = re.compile(r"I?LV[A-Z]*2_[A-Z]{2}(\d{4})_(\d{2})(\d{2})_")
+# ILVIS2_GL2017_0825_R1801_049549.TXT, LVISF2_IS_GL2022_0419_R2408_066833.TXT, LVISF2_IS_ARCSIX2024_0528_...
+_TXT_NAME = re.compile(r"I?LV[A-Z]*2_(?:IS_)?[A-Za-z][A-Za-z0-9]*?(\d{4})_(\d{2})(\d{2})_")
 _LGE_NAME = re.compile(r"LVIS_[A-Z]{2}_(\d{4})(\d{2})(\d{2})_")
 _V2_EXTRA = ["CHANNEL_ZT", "CHANNEL_ZG", "CHANNEL_RH"]
 
@@ -31,6 +35,10 @@ _V2_MAP = {"LFID": "lfid", "SHOTNUMBER": "shotnumber", "TIME": "time", "GLON": "
            "ZG": "elevation", "ZH": "z_high", "ZT": "z_top", "RH50": "rh50", "AZIMUTH": "azimuth",
            "INCIDENTANGLE": "incident_angle", "RANGE": "range", "COMPLEXITY": "complexity",
            "CHANNEL_ZG": "channel_zg"}
+# LVISF2 ice surface: CHANNEL is the channel used for all the L2 values, so for Z_LOW as CHANNEL_ZG is for ZG
+_IS_MAP = {"LFID": "lfid", "SHOTNUMBER": "shotnumber", "TIME": "time", "LON_LOW": "longitude", "LAT_LOW": "latitude",
+           "Z_LOW": "elevation", "Z_HIGH": "z_high", "AZIMUTH": "azimuth", "INCIDENTANGLE": "incident_angle",
+           "RANGE": "range", "COMPLEXITY": "complexity", "CHANNEL": "channel_zg"}
 
 _LGE_DTYPE = np.dtype([("lfid", ">u4"), ("shotnumber", ">u4"), ("time", ">f8"), ("longitude", ">f8"),
                        ("latitude", ">f8"), ("elevation", ">f4"), ("rh25", ">f4"), ("rh50", ">f4"),
@@ -64,7 +72,7 @@ def _read_txt(filename):
     if first.shape[1] == len(names) + len(_V2_EXTRA):
         names = names + _V2_EXTRA
     df = pd.read_csv(filename, comment="#", sep=r"\s+", header=None, names=names, engine="c")
-    mapping = _V2_MAP if "GLON" in names else _V1_MAP
+    mapping = _V2_MAP if "GLON" in names else _IS_MAP if "Z_LOW" in names else _V1_MAP
     return {new: df[old].to_numpy() for old, new in mapping.items() if old in df}
 
 

@@ -96,6 +96,8 @@ def granule_rows(collection, items):
     rows = []
     for item in items:
         umm = item["umm"]
+        if not collection.accepts(umm["GranuleUR"]):
+            continue
         lats, lons = _lat_lon_points(umm)
         temporal = umm.get("TemporalExtent", {}).get("RangeDateTime", {})
         https, s3 = _urls(umm)
