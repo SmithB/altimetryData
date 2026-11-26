@@ -31,7 +31,8 @@ _QI_SCALES = {
 }
 _QI_INT_FIELDS = {"xmt_sigstr", "rcv_sigstr", "pulse_width", "passive_sig"}
 
-_QI_NAME = re.compile(r"(BLATM1B|ILATM1B|ILNSA1B)_((\d{4})|(\d{2}))(\d{2})(\d{2})(.*?)\.qi$")
+# a few NSIDC granules have no .qi extension (e.g. BLATM1B_20050904_012629, BLATM1B_20080802_134319.atm4cT3.F1)
+_QI_NAME = re.compile(r"(BLATM1B|ILATM1B|ILNSA1B)_((\d{4})|(\d{2}))(\d{2})(\d{2})(.*?)(\.qi)?$")
 _H5_NAME = re.compile(r"(ILATM1B|ILNSA1B)_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})")
 
 
@@ -83,6 +84,8 @@ def read_qi(filename):
         out[name] = column.astype(np.int32) if name in _QI_INT_FIELDS else (column / scale).astype(np.float64)
 
     m = _QI_NAME.match(os.path.basename(filename))
+    if m is None:
+        raise ValueError(f"{filename}: cannot get the date from the file name")
     year = int(m.group(2))
     if m.group(4):
         year = year + 1900 if year >= 90 else year + 2000
